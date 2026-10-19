@@ -4,7 +4,6 @@ go 1.27
 
 require (
 	github.com/gin-gonic/gin v1.11.0
-	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.11.1
 	github.com/subosito/gotenv v1.6.0

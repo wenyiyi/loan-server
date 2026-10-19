@@ -9,18 +9,16 @@ import (
 	"fmt"
 	"time"
 
-	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type Worker struct {
 	DB     *gorm.DB
 	Sender Sender
-	logger *zap.Logger
 }
 
-func NewWorker(db *gorm.DB, sender Sender, logger *zap.Logger) *Worker {
-	return &Worker{DB: db, Sender: sender, logger: logger}
+func NewWorker(db *gorm.DB, sender Sender) *Worker {
+	return &Worker{DB: db, Sender: sender}
 }
 
 // Run leases one task at a time. No database transaction stays open during SMTP.

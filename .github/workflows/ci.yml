@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: loans
+          POSTGRES_USER: loans
+          POSTGRES_PASSWORD: ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U loans -d loans"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://loans:ci-password@127.0.0.1:5432/loans?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: Module consistency
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go test -tags=integration -race ./tests/integration/... -count=2
+      - name: Build entry points
+        run: |
+          go build -o bin/server ./cmd/server
+          go build -o bin/worker ./cmd/worker

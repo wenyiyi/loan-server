@@ -56,7 +56,7 @@ func run(path string) error {
 	}
 	defer sqlDB.Close()
 	sender := notification.NewSMTP(conf.SMTP)
-	worker := notification.NewWorker(db, sender, logger)
+	worker := notification.NewWorker(db, sender)
 	worker.Run(ctx)
 	return nil
 }

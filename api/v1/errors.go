@@ -28,5 +28,4 @@ var (
 	ErrConflictError        = NewError(http.StatusConflict, 2005, "Conflict")
 	ErrInternalServerError  = NewError(http.StatusInternalServerError, 5000, "Internal Server Error")
 	ErrNotReady             = NewError(http.StatusServiceUnavailable, 5001, "database unavailable")
-	ErrInvalid              = ErrRequestParams
 )
