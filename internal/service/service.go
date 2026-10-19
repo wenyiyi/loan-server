@@ -19,10 +19,9 @@ type Service struct {
 	outbox        repository.NotificationOutboxRepository
 }
 
-func NewService(db *repository.Repository, loggers ...*zap.Logger) Service {
-	logger := zap.NewNop()
-	if len(loggers) > 0 && loggers[0] != nil {
-		logger = loggers[0]
+func NewService(db *repository.Repository, logger *zap.Logger) Service {
+	if logger == nil {
+		logger = zap.NewNop()
 	}
 	return Service{logger: logger, db: db, loans: repository.NewLoanRepository(db), approvals: repository.NewApprovalRepository(db), disbursements: repository.NewDisbursementRepository(db), investments: repository.NewInvestmentRepository(db), history: repository.NewLoanStatusHistoryRepository(db), outbox: repository.NewNotificationOutboxRepository(db)}
 }

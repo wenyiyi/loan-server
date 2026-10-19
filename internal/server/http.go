@@ -10,20 +10,42 @@ import (
 	"LoanService/config"
 	"LoanService/internal/handler"
 	"LoanService/internal/middleware"
+	"LoanService/pkg/tracer"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func NewHTTPServer(
+	ctx context.Context,
 	conf *config.Config,
 	logger *zap.Logger,
 	loanHandler *handler.LoanHandler,
 	investmentHandler *handler.InvestmentHandler,
-	authMiddleware gin.HandlerFunc,
-	ready func(context.Context) error,
-) *http.Server {
+	db *gorm.DB,
+) (*http.Server, func(), error) {
+	shutdownTracing, err := tracer.InitTracer(ctx, conf.Trace.Endpoint, conf.Trace.Name)
+	if err != nil {
+		applog.Error(ctx, "initialize HTTP tracing failed", err)
+		return nil, nil, err
+	}
+	cleanup := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			applog.Error(shutdownCtx, "flush HTTP tracing failed", err)
+		}
+	}
+	ready := func(ctx context.Context) error {
+		pool, err := db.DB()
+		if err != nil {
+			applog.Error(ctx, "get readiness database pool failed", err)
+			return err
+		}
+		return pool.PingContext(ctx)
+	}
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(
@@ -35,13 +57,13 @@ func NewHTTPServer(
 	engine.GET("/healthz", health)
 	engine.GET("/readyz", func(ctx *gin.Context) {
 		if err := ready(ctx.Request.Context()); err != nil {
-			applog.Error(context.Background(), "http.NewHTTPServer failed", err)
+			applog.Error(ctx.Request.Context(), "database readiness check failed", err)
 			v1.HandleError(ctx, v1.ErrNotReady)
 			return
 		}
 		ctx.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
-	api := engine.Group("/api/v1", authMiddleware)
+	api := engine.Group("/api/v1", middleware.Auth(conf.Auth))
 
 	loans := api.Group("/loans")
 	{
@@ -62,7 +84,7 @@ func NewHTTPServer(
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
-	}
+	}, cleanup, nil
 }
 
 func health(ctx *gin.Context) {

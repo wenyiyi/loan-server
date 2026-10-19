@@ -90,11 +90,7 @@ func (r *loanRepository) UpdateInvestedAmount(
 }
 
 // UpdateStatusWithConditions performs a conditional status transition.
-func (r *loanRepository) UpdateStatusWithConditions(
-	ctx context.Context,
-	loanNo string,
-	from, to model.Status,
-) error {
+func (r *loanRepository) UpdateStatusWithConditions(ctx context.Context, loanNo string, from, to model.Status) error {
 	result := r.DB(ctx).
 		Model(&model.Loan{}).
 		Where("loan_no = ? AND status = ?", loanNo, from).

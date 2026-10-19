@@ -31,6 +31,7 @@ func NewInvestmentHandler(
 func (h *InvestmentHandler) Invest(ctx *gin.Context) {
 	var req v1.InvestmentRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.WithContext(ctx.Request.Context(), h.logger).Error("invalid investment request", zap.Error(err))
 		v1.HandleError(ctx, v1.ErrRequestParams)
 		return
 	}

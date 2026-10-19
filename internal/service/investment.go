@@ -3,8 +3,10 @@ package service
 import (
 	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
+	"LoanService/pkg/log"
 	"context"
 	"encoding/json"
+	"go.uber.org/zap"
 )
 
 func (s Service) Invest(
@@ -19,12 +21,22 @@ func (s Service) Invest(
 		// Lock the loan to prevent concurrent over-investment
 		loan, err := tx.loans.GetForUpdate(ctx, loanNo)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error(
+				"lock loan for investment failed",
+				zap.String("loan_no", loanNo),
+				zap.Error(err),
+			)
 			return err
 		}
 
 		// Return the original result for duplicate requests
 		investment, err := tx.checkIdempotency(ctx, loanNo, InvestorID, req)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error(
+				"check investment idempotency failed",
+				zap.String("loan_no", loanNo),
+				zap.Error(err),
+			)
 			return err
 		}
 
@@ -35,12 +47,22 @@ func (s Service) Invest(
 		// Validate the investment and calculate the new balance
 		result, err = calculateInvestment(loan, loanNo, req.Amount)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error(
+				"calculate investment failed",
+				zap.String("loan_no", loanNo),
+				zap.Error(err),
+			)
 			return err
 		}
 
 		// Save the investment and update the loan atomically.
 		err = tx.saveInvestment(ctx, loanNo, InvestorID, req, result)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error(
+				"save investment failed",
+				zap.String("loan_no", loanNo),
+				zap.Error(err),
+			)
 			return err
 		}
 
@@ -53,6 +75,11 @@ func (s Service) Invest(
 	})
 
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"investment transaction failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
@@ -67,6 +94,11 @@ func (s Service) checkIdempotency(
 ) (*v1.InvestmentResult, error) {
 	investment, err := s.investments.GetByKey(ctx, req.Key)
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"get existing investment failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
@@ -83,6 +115,11 @@ func (s Service) checkIdempotency(
 
 	var result v1.InvestmentResult
 	if err := json.Unmarshal(investment.Response, &result); err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"decode investment response failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
@@ -110,15 +147,30 @@ func calculateInvestment(loan model.Loan, loanNo string, amount int64) (*v1.Inve
 func (s Service) saveInvestment(ctx context.Context, loanNo string, InvestorID string, req v1.InvestmentRequest, result *v1.InvestmentResult) error {
 	investment, err := s.investments.Create(ctx, model.Investment{LoanNo: loanNo, InvestorID: InvestorID, Email: req.Email, Amount: req.Amount, IdempotencyKey: req.Key, Response: json.RawMessage(`{}`)})
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"create investment failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return err
 	}
 	result.ID = investment.ID
 	err = s.loans.UpdateInvestedAmount(ctx, loanNo, result.InvestedAmount, result.Status)
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"update invested amount failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return err
 	}
 	response, err := json.Marshal(result)
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"encode investment response failed",
+			zap.String("loan_no", loanNo),
+			zap.Error(err),
+		)
 		return err
 	}
 	return s.investments.SaveResponse(ctx, investment.ID, response)
@@ -126,10 +178,20 @@ func (s Service) saveInvestment(ctx context.Context, loanNo string, InvestorID s
 
 func (s Service) handleFullyFunded(ctx context.Context, loan model.Loan) error {
 	if err := s.history.Create(ctx, model.LoanStatusHistory{LoanNo: loan.LoanNo, PreviousState: model.Approved, NewState: model.Invested, Action: model.ActionFullyFunded}); err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"create fully funded history failed",
+			zap.String("loan_no", loan.LoanNo),
+			zap.Error(err),
+		)
 		return err
 	}
 	investments, err := s.investments.ListByLoanNo(ctx, loan.LoanNo)
 	if err != nil {
+		log.WithContext(ctx, s.logger).Error(
+			"list funded loan investments failed",
+			zap.String("loan_no", loan.LoanNo),
+			zap.Error(err),
+		)
 		return err
 	}
 	recipients := make(map[string]model.Investment)

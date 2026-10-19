@@ -14,7 +14,7 @@ Outbox 通过 `FOR UPDATE SKIP LOCKED` 原子领取，租约过期可重新领�
 
 API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewConfig` 只加载单个 YAML 文件，默认 config/local.yml，测试使用 config/test.yml，不读取环境变量覆盖，`repository.NewDB` 管理数据库连接，`internal/server` 组装路由，`internal/middleware` 提供认证、角色授权、请求日志和链路关联。每张表有独立 Repository：Loan、Approval、Disbursement、Investment、LoanStatusHistory 和 NotificationOutbox，各自只访问对应表。Service 编排跨表业务，并把同一个事务连接传给各 Repository。
 
-风格参考 marvel-main：使用 New 构造函数，入口显式注入依赖，handler 使用 api/v1 的统一响应，zap 日志通过请求 context 关联 trace_id。贷款和投资 ID 在 Go 与 JSON 边界统一为字符串，PostgreSQL 保持 BIGSERIAL；金额保持 int64。
+风格参考 marvel-main：使用 New 构造函数，入口通过 Google Wire 生成依赖注入代码（cmd/server/wire 和 cmd/worker/wire），使用 provider sets 和 NewWire，资源由 cleanup 释放，handler 使用 api/v1 的统一响应，zap 日志通过请求 context 关联 trace_id。贷款和投资 ID 在 Go 与 JSON 边界统一为字符串，PostgreSQL 保持 BIGSERIAL；金额保持 int64。
 
 数据库结构继续由 SQL migrations 管理，不在启动时调用 AutoMigrate。GORM 的 SQL 日志关闭以避免输出业务参数。rate/roi 使用 numeric(10,6)，自增主键使用 bigint；应用时间字段使用 Unix 毫秒整数。Compose 只挂载 001_init.up.sql；001_init.down.sql 仅用于显式手动回滚，不在正常启动时执行。
 

@@ -57,7 +57,13 @@ go run ./cmd/worker -conf config/test.yml
 
 `config/local.yml` contains local settings; `config/test.yml` contains test settings. For a container deployment, mount the selected YAML at `/app/config/local.yml` or pass its path with `-conf`; database and SMTP addresses must be reachable from the container.
 
-`config.NewConfig` loads and validates configuration. `repository.NewDB` creates the database connection. The entry point assembles repositories, the service, handlers, and the HTTP server. Each database table has its own repository; the service coordinates transactions across them.
+`config.NewConfig` loads and validates configuration. `repository.NewDB` creates the database connection. Google Wire assembles repositories, the service, handlers, and the HTTP server. `cmd/server/wire/wire.go` and `cmd/worker/wire/wire.go` declare provider sets; their `wire_gen.go` files are generated and checked in. Entry points call `wire.NewWire` and defer cleanup; the HTTP app handles OS signals and graceful shutdown. The HTTP constructor initializes tracing and returns its cleanup to Wire, which flushes tracing and closes the database pool after the app exits. Each database table has its own repository; the service coordinates transactions across them. After changing constructor dependencies, regenerate the wiring from the project root:
+
+```sh
+make wire
+```
+
+Normal builds use the generated files and do not run Wire.
 
 `pkg/log.NewLog` creates the shared zap logger. `log.level` in the selected YAML controls the logging level.
 

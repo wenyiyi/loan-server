@@ -45,6 +45,7 @@ func NewConfig(path string) (*Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		applog.Error(context.Background(), "read configuration failed", err)
 		return nil, fmt.Errorf("read configuration %s: %w", path, err)
 	}
 	var raw struct {
@@ -66,6 +67,7 @@ func NewConfig(path string) (*Config, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&raw); err != nil {
+		applog.Error(context.Background(), "decode configuration failed", err)
 		return nil, fmt.Errorf("decode configuration %s: %w", path, err)
 	}
 	cfg := &Config{
@@ -85,6 +87,7 @@ func NewConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("database.url required in %s", path)
 	}
 	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
+		applog.Error(context.Background(), "parse HTTP address failed", err)
 		return nil, fmt.Errorf("invalid http.addr in %s: %w", path, err)
 	}
 	return cfg, nil

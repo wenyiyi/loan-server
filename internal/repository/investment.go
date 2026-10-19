@@ -2,6 +2,7 @@ package repository
 
 import (
 	"LoanService/internal/model"
+	applog "LoanService/pkg/log"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ func (r *investmentRepository) GetByKey(ctx context.Context, key string) (*model
 		return nil, nil
 	}
 	if err != nil {
+		applog.Error(ctx, "get investment by idempotency key failed", err)
 		return nil, err
 	}
 	return &value, nil

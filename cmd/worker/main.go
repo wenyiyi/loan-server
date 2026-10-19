@@ -1,15 +1,14 @@
 package main
 
 import (
-	"LoanService/internal/repository"
 	"context"
 	"flag"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"LoanService/cmd/worker/wire"
 	"LoanService/config"
-	"LoanService/internal/notification"
 	applog "LoanService/pkg/log"
 )
 
@@ -40,19 +39,12 @@ func run(path string) error {
 	defer func() { _ = logger.Sync() }()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	db, err := repository.NewDB(ctx, conf)
+	worker, cleanup, err := wire.NewWire(ctx, conf)
 	if err != nil {
-		applog.Error(context.Background(), "main.run failed", err)
+		applog.Error(ctx, "initialize worker dependencies failed", err)
 		return err
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		applog.Error(context.Background(), "main.run failed", err)
-		return err
-	}
-	defer sqlDB.Close()
-	sender := notification.NewSMTP(conf.SMTP)
-	worker := notification.NewWorker(db, sender)
+	defer cleanup()
 	worker.Run(ctx)
 	return nil
 }

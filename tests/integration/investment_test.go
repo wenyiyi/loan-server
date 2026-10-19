@@ -17,7 +17,6 @@ import (
 
 	"LoanService/config"
 	"LoanService/internal/handler"
-	"LoanService/internal/middleware"
 	"LoanService/internal/model"
 	"LoanService/internal/notification"
 	"LoanService/internal/server"
@@ -203,15 +202,19 @@ func TestHTTPLifecycle(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logger := zap.NewNop()
 	baseHandler := handler.NewHandler(logger)
-	router := server.NewHTTPServer(&config.Config{HTTPAddr: ":8080"}, logger,
-		handler.NewLoanHandler(baseHandler, s), handler.NewInvestmentHandler(baseHandler, s),
-		middleware.Auth(map[string]model.Identity{"staff": {ID: "staff", Role: "staff"}, "investor": {ID: "investor", Role: "investor", Email: "i@example.com"}}), func(ctx context.Context) error {
-			db, err := p.DB()
-			if err != nil {
-				return err
-			}
-			return db.PingContext(ctx)
-		}).Handler
+	httpServer, cleanup, err := server.NewHTTPServer(context.Background(), &config.Config{
+		HTTPAddr: ":8080",
+		Auth: map[string]model.Identity{
+			"staff":    {ID: "staff", Role: "staff"},
+			"investor": {ID: "investor", Role: "investor", Email: "i@example.com"},
+		},
+	}, logger, handler.NewLoanHandler(baseHandler, s), handler.NewInvestmentHandler(baseHandler, s), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	router := httpServer.Handler
+
 	call := func(path, token, body string, want int) []byte {
 		t.Helper()
 		req := httptest.NewRequest("POST", path, strings.NewReader(body))

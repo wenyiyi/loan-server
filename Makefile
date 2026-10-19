@@ -1,4 +1,4 @@
-.PHONY: run worker test integration vet build
+.PHONY: run worker test integration vet build wire
 run:
 	go run ./cmd/server
 test:
@@ -13,3 +13,6 @@ build:
 
 worker:
 	go run ./cmd/worker
+
+wire:
+	go generate ./cmd/server/wire ./cmd/worker/wire

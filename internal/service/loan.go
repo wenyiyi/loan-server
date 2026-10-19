@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
@@ -12,12 +13,8 @@ import (
 )
 
 // Create creates a loan and records its initial status.
-func (s Service) Create(
-	ctx context.Context,
-	req v1.LoanCreateRequest,
-) (*v1.LoanCreateResponse, error) {
+func (s Service) Create(ctx context.Context, req v1.LoanCreateRequest) (*v1.LoanCreateResponse, error) {
 	loanNo := sid.GenUUID()
-
 	loan := model.Loan{
 		LoanNo:          loanNo,
 		BorrowerID:      req.BorrowerID,
@@ -29,23 +26,16 @@ func (s Service) Create(
 	}
 
 	err := s.transaction(ctx, func(tx Service) error {
-		if _, err := tx.loans.Create(ctx, loan); err != nil {
+		_, err := tx.loans.Create(ctx, loan)
+		if err != nil {
+			log.WithContext(ctx, s.logger).Error("insert loan failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
 
-		return tx.recordHistory(
-			ctx,
-			loanNo,
-			"",
-			model.Proposed,
-			model.ActionCreate)
+		return tx.recordHistory(ctx, loanNo, "", model.Proposed, model.ActionCreate)
 	})
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"create loan failed",
-			zap.String("loan_no", loanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("create loan failed", zap.String("loan_no", loanNo), zap.Error(err))
 		return nil, err
 	}
 
@@ -55,47 +45,25 @@ func (s Service) Create(
 }
 
 // Approve approves a proposed loan.
-func (s Service) Approve(
-	ctx context.Context,
-	loanNo string,
-	EmployeeId string,
-	req v1.ApprovalRequest,
-) error {
-	loan, err := s.loans.GetByLoanNo(ctx, loanNo)
-	if err != nil {
-		return err
-	}
-
-	if loan.Status != model.Proposed {
-		return v1.ErrState
-	}
-
-	if req.ApprovedAt < loan.CreatedAt {
-		return v1.ErrInvalidApprovalTime
-	}
-
+func (s Service) Approve(ctx context.Context, loanNo string, EmployeeId string, req v1.ApprovalRequest) error {
 	return s.transaction(ctx, func(tx Service) error {
 		// Atomic status transition.
-		err = tx.loans.UpdateStatusWithConditions(
-			ctx,
-			loanNo,
-			model.Proposed,
-			model.Approved,
-		)
+		err := tx.loans.UpdateStatusWithConditions(ctx, loanNo, model.Proposed, model.Approved)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error("update loan approval status failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
-
+		// create approval
 		_, err = tx.approvals.Create(ctx, model.Approval{
 			LoanNo:        loanNo,
 			EmployeeID:    EmployeeId,
 			VisitProofURL: req.VisitProofURL,
-			ApprovedAt:    req.ApprovedAt,
+			ApprovedAt:    time.Now().UnixMilli(),
 		})
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error("create loan approval failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
-
 		return tx.recordHistory(
 			ctx,
 			loanNo,
@@ -106,12 +74,7 @@ func (s Service) Approve(
 }
 
 // recordHistory records a loan status transition.
-func (s Service) recordHistory(
-	ctx context.Context,
-	loanNo string,
-	from, to model.Status,
-	action model.Action,
-) error {
+func (s Service) recordHistory(ctx context.Context, loanNo string, from, to model.Status, action model.Action) error {
 	err := s.history.Create(ctx, model.LoanStatusHistory{
 		LoanNo:        loanNo,
 		PreviousState: from,
@@ -120,11 +83,7 @@ func (s Service) recordHistory(
 	})
 
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"create loan status history failed",
-			zap.String("loan_no", loanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("create loan status history failed", zap.String("loan_no", loanNo), zap.Error(err))
 	}
 
 	return err
@@ -135,6 +94,7 @@ func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string,
 	return s.transaction(ctx, func(tx Service) error {
 		loan, err := tx.loans.GetForUpdate(ctx, loanNo)
 		if err != nil {
+			log.WithContext(ctx, s.logger).Error("lock loan for disbursement failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
 
@@ -142,25 +102,25 @@ func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string,
 			return v1.ErrState
 		}
 
-		if _, err := tx.disbursements.Create(ctx, model.Disbursement{
+		_, err = tx.disbursements.Create(ctx, model.Disbursement{
 			LoanNo:             loanNo,
 			OfficerEmployeeID:  EmployeeId,
 			SignedAgreementURL: req.AgreementURL,
-			DisbursedAt:        req.DisbursedAt,
-		}); err != nil {
+			DisbursedAt:        time.Now().UnixMilli(),
+		})
+		if err != nil {
+			log.WithContext(ctx, s.logger).Error("create loan disbursement failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
 
-		if err := tx.loans.UpdateStatusWithConditions(
+		err = tx.loans.UpdateStatusWithConditions(
 			ctx, loanNo, model.Invested, model.Disbursed,
-		); err != nil {
+		)
+		if err != nil {
+			log.WithContext(ctx, s.logger).Error("update loan disbursement status failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
 
-		return tx.recordHistory(
-			ctx, loanNo,
-			model.Invested, model.Disbursed,
-			model.ActionDisburse,
-		)
+		return tx.recordHistory(ctx, loanNo, model.Invested, model.Disbursed, model.ActionDisburse)
 	})
 }

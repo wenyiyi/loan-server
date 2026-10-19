@@ -19,7 +19,6 @@ import (
 
 	"LoanService/config"
 	"LoanService/internal/handler"
-	"LoanService/internal/middleware"
 	"LoanService/internal/model"
 	"LoanService/internal/server"
 	"LoanService/internal/service"
@@ -74,7 +73,7 @@ func setup(t *testing.T) (service.Service, *gorm.DB) {
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(data)).Error, fmt.Sprintf("migration %s", filepath.Base(migration)))
 	}
-	return service.NewService(repository.NewRepository(db)), db
+	return service.NewService(repository.NewRepository(db), zap.NewNop()), db
 }
 
 func setupRouter(t *testing.T, svc service.Service, db *gorm.DB) http.Handler {
@@ -82,14 +81,15 @@ func setupRouter(t *testing.T, svc service.Service, db *gorm.DB) http.Handler {
 	gin.SetMode(gin.TestMode)
 	logger := zap.NewNop()
 	base := handler.NewHandler(logger)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
 	tokens := map[string]model.Identity{
 		"staff-token":    {ID: "staff", Role: "staff"},
 		"investor-token": {ID: "investor", Role: "investor", Email: "i@example.com"},
 	}
-	return server.NewHTTPServer(&config.Config{HTTPAddr: ":8080", Trace: config.TraceConfig{Name: "loan-integration"}},
-		logger, handler.NewLoanHandler(base, svc), handler.NewInvestmentHandler(base, svc), middleware.Auth(tokens), sqlDB.PingContext).Handler
+	httpServer, cleanup, err := server.NewHTTPServer(context.Background(), &config.Config{HTTPAddr: ":8080", Trace: config.TraceConfig{Name: "loan-integration"}, Auth: tokens},
+		logger, handler.NewLoanHandler(base, svc), handler.NewInvestmentHandler(base, svc), db)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	return httpServer.Handler
 }
 
 func loanID(id int64) string { return strconv.FormatInt(id, 10) }
