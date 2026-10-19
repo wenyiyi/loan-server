@@ -1,0 +1,7 @@
+.env
+/server
+/coverage.out
+
+/bin/
+
+.env.test

@@ -1,0 +1,23 @@
+# Environment variables override these local defaults.
+database:
+  url: postgres://loans:local-password@localhost:5432/loans?sslmode=disable
+http:
+  addr: :8080
+auth:
+  tokens:
+    local-staff-token-change-123456:
+      id: EMP001
+      role: staff
+    local-investor-token-change-123456:
+      id: INVESTOR001
+      role: investor
+      email: investor@example.com
+smtp:
+  address: localhost:1025
+  from: loans@example.com
+  allow_plaintext: true
+trace:
+  name: amartha-loan-service
+  endpoint: ""
+log:
+  level: info

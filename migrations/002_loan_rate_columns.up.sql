@@ -1,0 +1,5 @@
+BEGIN;
+ALTER TABLE loans RENAME COLUMN interest_rate_bps TO rate;
+ALTER TABLE loans RENAME COLUMN roi_bps TO roi;
+ALTER TABLE loans ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+COMMIT;
