@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
 	"LoanService/internal/notification"
 	"LoanService/internal/repository"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type fakeSender struct {
@@ -31,7 +33,7 @@ func TestOutboxWorkerRetryAndDelivery(t *testing.T) {
 	s, db := setup(t)
 	l := create(t, s, 100)
 	approve(t, s, l.LoanNo)
-	_, err := s.Invest(context.Background(), l.LoanNo, "investor", inv("fund", 100))
+	_, err := s.Invest(context.Background(), l.LoanNo, "investor", "i@example.com", "fund", v1.InvestmentRequest{Amount: 100})
 	require.NoError(t, err)
 	sender := &fakeSender{fail: true}
 	worker := notification.Worker{DB: db, Sender: sender}
@@ -67,7 +69,7 @@ func TestOutboxConcurrentClaimAndExpiredLease(t *testing.T) {
 	s, db := setup(t)
 	l := create(t, s, 100)
 	approve(t, s, l.LoanNo)
-	_, err := s.Invest(context.Background(), l.LoanNo, "investor", inv("fund", 100))
+	_, err := s.Invest(context.Background(), l.LoanNo, "investor", "i@example.com", "fund", v1.InvestmentRequest{Amount: 100})
 	require.NoError(t, err)
 	repo := repository.NewNotificationOutboxRepository(repository.NewRepository(db))
 	c := context.Background()
@@ -100,8 +102,8 @@ func TestOutboxConcurrentClaimAndExpiredLease(t *testing.T) {
 	require.NotNil(t, reclaimed)
 	require.Equal(t, taskID, reclaimed.ID)
 	t.Log("[Run] Complete and retry with old lease; want no change to new lease")
-	require.NoError(t, repo.Complete(c, taskID, oldLease))
-	require.NoError(t, repo.Retry(c, taskID, oldLease))
+	require.ErrorIs(t, repo.Complete(c, taskID, oldLease), gorm.ErrRecordNotFound)
+	require.ErrorIs(t, repo.Retry(c, taskID, oldLease), gorm.ErrRecordNotFound)
 	var current model.NotificationOutbox
 	require.NoError(t, db.Take(&current).Error)
 	require.Nil(t, current.DeliveredAt)

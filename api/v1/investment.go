@@ -3,9 +3,7 @@ package v1
 import "LoanService/internal/model"
 
 type InvestmentRequest struct {
-	Amount int64  `json:"amount" binding:"required,gt=0"`
-	Email  string `json:"-"`
-	Key    string `json:"-"`
+	Amount int64 `json:"amount" binding:"required,gt=0"`
 }
 
 type InvestmentResult struct {

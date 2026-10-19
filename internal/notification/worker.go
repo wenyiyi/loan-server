@@ -21,10 +21,12 @@ func NewWorker(db *gorm.DB, sender Sender) *Worker {
 	return &Worker{DB: db, Sender: sender}
 }
 
-// Run leases one task at a time. No database transaction stays open during SMTP.
+// Run polls the outbox every second and processes one task at a time.
+// No database transaction is held open while sending emails.
 func (w Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -37,31 +39,59 @@ func (w Worker) Run(ctx context.Context) {
 	}
 }
 
+// Once claims and processes a single notification task.
 func (w Worker) Once(ctx context.Context) error {
+	// Generate a unique lease token for this attempt.
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	lease := hex.EncodeToString(b)
-	outbox := repository.NewNotificationOutboxRepository(repository.NewRepository(w.DB))
-	task, err := outbox.Claim(ctx, lease)
-	if err != nil {
-		applog.Error(ctx, "worker.Once failed", err)
+	if _, err := rand.Read(b); err != nil {
 		return err
 	}
+	lease := hex.EncodeToString(b)
+
+	outbox := repository.NewNotificationOutboxRepository(
+		repository.NewRepository(w.DB),
+	)
+
+	// Atomically claim an available task.
+	task, err := outbox.Claim(ctx, lease)
+	if err != nil {
+		return err
+	}
+
+	// No pending tasks.
 	if task == nil {
 		return nil
 	}
 
+	// Limit email sending to 10 seconds, shorter than the 60-second lease.
 	sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	err = w.Sender.Send(sendCtx, task.Email, task.AgreementURL, fmt.Sprintf("notification-%d", task.ID))
+
+	err = w.Sender.Send(
+		sendCtx,
+		task.Email,
+		task.AgreementURL,
+		fmt.Sprintf("notification-%d", task.ID),
+	)
+
+	// Use a separate timeout to update the task status.
+	ackCtx, ackCancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		5*time.Second,
+	)
+	defer ackCancel()
+
 	if err != nil {
-		applog.Error(ctx, "worker.Once failed", err)
-		ack := outbox.Retry(ctx, task.ID, lease)
-		if ack != nil {
-			applog.Error(ctx, "worker.Once failed", ack)
-			return ack
+		// Release the lease and schedule a retry.
+		if retryErr := outbox.Retry(ackCtx, task.ID, lease); retryErr != nil {
+			return fmt.Errorf(
+				"send failed: %v; retry update failed: %w",
+				err, retryErr,
+			)
 		}
 		return err
 	}
-	return outbox.Complete(ctx, task.ID, lease)
+
+	// Mark the task as delivered.
+	return outbox.Complete(ackCtx, task.ID, lease)
 }

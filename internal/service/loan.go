@@ -64,12 +64,7 @@ func (s Service) Approve(ctx context.Context, loanNo string, EmployeeId string, 
 			log.WithContext(ctx, s.logger).Error("create loan approval failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
-		return tx.recordHistory(
-			ctx,
-			loanNo,
-			model.Proposed,
-			model.Approved,
-			model.ActionApprove)
+		return tx.recordHistory(ctx, loanNo, model.Proposed, model.Approved, model.ActionApprove)
 	})
 }
 
