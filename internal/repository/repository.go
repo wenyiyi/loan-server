@@ -47,3 +47,22 @@ func NewDB(ctx context.Context, conf *config.Config) (*gorm.DB, error) {
 	}
 	return db, nil
 }
+
+// NewDBWithCleanup lets Wire close the pool on initialization failure or exit.
+func NewDBWithCleanup(ctx context.Context, conf *config.Config) (*gorm.DB, func(), error) {
+	db, err := NewDB(ctx, conf)
+	if err != nil {
+		applog.Error(ctx, "initialize database provider failed", err)
+		return nil, nil, err
+	}
+	pool, err := db.DB()
+	if err != nil {
+		applog.Error(ctx, "get database pool failed", err)
+		return nil, nil, err
+	}
+	return db, func() {
+		if err := pool.Close(); err != nil {
+			applog.Error(ctx, "close database pool failed", err)
+		}
+	}, nil
+}

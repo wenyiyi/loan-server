@@ -48,14 +48,14 @@ Both entry points read only `config/local.yml` by default. Run them from the pro
 
 ## Configuration and Dependency Injection
 
-Configuration uses a single YAML file, explicit constructors, and dependency injection. Use `-conf config/test.yml` to run against the test configuration. Files are never merged and environment variables never override them.
+Configuration uses a single YAML file, explicit constructors, and dependency injection. The API, worker, and integration tests share `config/local.yml`. Files are never merged and environment variables never override them.
 
 ```sh
-go run ./cmd/server -conf config/test.yml
-go run ./cmd/worker -conf config/test.yml
+go run ./cmd/server -conf config/local.yml
+go run ./cmd/worker -conf config/local.yml
 ```
 
-`config/local.yml` contains local settings; `config/test.yml` contains test settings. For a container deployment, mount the selected YAML at `/app/config/local.yml` or pass its path with `-conf`; database and SMTP addresses must be reachable from the container.
+`config/local.yml` contains the shared local and integration-test settings. For a container deployment, mount the selected YAML at `/app/config/local.yml` or pass its path with `-conf`; database and SMTP addresses must be reachable from the container.
 
 `config.NewConfig` loads and validates configuration. `repository.NewDB` creates the database connection. Google Wire assembles repositories, the service, handlers, and the HTTP server. `cmd/server/wire/wire.go` and `cmd/worker/wire/wire.go` declare provider sets; their `wire_gen.go` files are generated and checked in. Entry points call `wire.NewWire` and defer cleanup; the HTTP app handles OS signals and graceful shutdown. The HTTP constructor initializes tracing and returns its cleanup to Wire, which flushes tracing and closes the database pool after the app exits. Each database table has its own repository; the service coordinates transactions across them. After changing constructor dependencies, regenerate the wiring from the project root:
 
@@ -176,20 +176,20 @@ go test -race ./...
 
 Database tests use the `integration` build tag and real PostgreSQL connections. Development and database tests share the `loans` database and account. Tests isolate their data in randomly named schemas and remove those schemas when finished.
 
-Prepare PostgreSQL and verify `database.url` in `config/test.yml`:
+Prepare PostgreSQL and verify `database.url` in `config/local.yml`:
 
 ```sh
 docker compose up -d db
 make integration
 
-# Run only the migration/model consistency test
-go test -tags=integration ./internal/model -v
+# Repeat PostgreSQL concurrency tests with race detection
+go test -tags=integration -race -count=2 -timeout=120s ./tests/integration
 
 # Run only the create-loan API test
 go test -tags=integration ./tests/integration -run '^TestCreateLoan$' -v
 ```
 
-Integration tests read only `config/test.yml`; they do not use environment variables. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. The model migration test compares PostgreSQL columns, defaults, constraints and indexes against a fresh GORM schema, and verifies explicit rollback and re-initialization. Cleanup does not depend on an outer transaction rolling back repository transactions.
+Integration tests read only `config/local.yml`; they do not use environment variables. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. Tests verify final database records for concurrent approval, funding, disbursement, idempotency conflicts, transaction rollback, and notification leases. Mail delivery uses a fake sender. Cleanup does not depend on an outer transaction rolling back repository transactions.
 
 Existing integration fixtures may require updates when model fields or API signatures change. Run the ordinary tests and the relevant database tests after changing these contracts.
 
@@ -227,4 +227,4 @@ Tracing works locally without an external collector. Set `trace.endpoint: "http:
 docker compose up -d db
 ```
 
-Open `cmd/server/main.go` in GoLand and click **Debug**. Set the working directory to the project root. The application reads `config/local.yml` by default; use program arguments `-conf config/test.yml` to select the test configuration. Send requests to `http://localhost:8080`; the debugger's listening port is separate from the API port.
+Open `cmd/server/main.go` in GoLand and click **Debug**. Set the working directory to the project root. The application reads `config/local.yml` by default; use program arguments `-conf <path>` to select another configuration file. Send requests to `http://localhost:8080`; the debugger's listening port is separate from the API port.

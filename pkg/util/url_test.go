@@ -16,6 +16,11 @@ func TestDocumentURLs(t *testing.T) {
 		{"embedded credentials", "https://user:pass@files.example.com/a.pdf", false},
 		{"missing host", "https:///a.pdf", false},
 	} {
-		t.Run(test.name, func(t *testing.T) { assert.Equal(t, test.valid, ValidURL(test.url, ".pdf")) })
+		t.Run(test.name, func(t *testing.T) {
+			t.Logf("[Input] case=%s, need HTTPS and .pdf; want valid=%t", test.name, test.valid)
+			actual := ValidURL(test.url, ".pdf")
+			t.Logf("[Actual] valid=%t, match=%t", actual, actual == test.valid)
+			assert.Equal(t, test.valid, actual)
+		})
 	}
 }

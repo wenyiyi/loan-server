@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="TestApproveRecordFailureRollsBack (integration)" type="GoTestRunConfiguration" factoryName="Go Test">
+    <module name="LoanService" />
+    <working_directory value="$PROJECT_DIR$" />
+    <go_parameters value="-tags=integration -v -race -count=1 -run=^TestApproveRecordFailureRollsBack$" />
+    <framework value="gotest" />
+    <kind value="PACKAGE" />
+    <package value="LoanService/tests/integration" />
+    <directory value="$PROJECT_DIR$/tests/integration" />
+    <method v="2" />
+  </configuration>
+</component>

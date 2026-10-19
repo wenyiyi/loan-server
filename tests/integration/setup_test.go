@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -31,7 +30,15 @@ import (
 
 func setup(t *testing.T) (service.Service, *gorm.DB) {
 	t.Helper()
-	conf, err := config.NewConfig("../../config/test.yml")
+	t.Logf("[Start] %s", t.Name())
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Log("[End] Failed. Check results and assertions above")
+		} else {
+			t.Log("[End] All checks passed. Results match")
+		}
+	})
+	conf, err := config.NewConfig("../../config/local.yml")
 	require.NoError(t, err)
 	dsn := conf.DatabaseURL
 	parsed, err := url.Parse(dsn)
@@ -53,8 +60,12 @@ func setup(t *testing.T) (service.Service, *gorm.DB) {
 	_, err = rand.Read(suffix[:])
 	require.NoError(t, err)
 	schema := "loan_test_" + hex.EncodeToString(suffix[:])
+	t.Logf("[Setup] Connected to database=%s, test schema=%s", databaseName, schema)
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
-	t.Cleanup(func() { require.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error) })
+	t.Cleanup(func() {
+		require.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error)
+		t.Logf("[Cleanup] Removed test schema=%s", schema)
+	})
 	params := parsed.Query()
 	params.Set("search_path", schema)
 	parsed.RawQuery = params.Encode()
@@ -71,6 +82,7 @@ func setup(t *testing.T) (service.Service, *gorm.DB) {
 	for _, migration := range migrations {
 		data, err := os.ReadFile(migration)
 		require.NoError(t, err)
+		t.Logf("[Setup] Run migration=%s", filepath.Base(migration))
 		require.NoError(t, db.Exec(string(data)).Error, fmt.Sprintf("migration %s", filepath.Base(migration)))
 	}
 	return service.NewService(repository.NewRepository(db), zap.NewNop()), db
@@ -91,5 +103,3 @@ func setupRouter(t *testing.T, svc service.Service, db *gorm.DB) http.Handler {
 	t.Cleanup(cleanup)
 	return httpServer.Handler
 }
-
-func loanID(id int64) string { return strconv.FormatInt(id, 10) }

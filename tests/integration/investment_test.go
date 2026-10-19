@@ -3,309 +3,371 @@
 package integration
 
 import (
-	"LoanService/api/v1"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http/httptest"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"LoanService/config"
-	"LoanService/internal/handler"
+	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
-	"LoanService/internal/notification"
-	"LoanService/internal/server"
 	"LoanService/internal/service"
-
-	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
-	"go.uber.org/zap"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
+func floatPointer(v float64) *decimal.Decimal { d := decimal.NewFromFloat(v); return &d }
 func create(t *testing.T, s service.Service, principal int64) model.Loan {
 	t.Helper()
-	l, e := s.Create(context.Background(), v1.LoanCreateRequest{BorrowerID: "borrower", PrincipalAmount: principal, Rate: floatPointer(10), ROI: floatPointer(8), AgreementURL: "https://example.com/a.pdf"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if l.ID == 0 {
-		t.Fatal("missing created ID")
-	}
-	loan, err := s.Get(context.Background(), loanID(l.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loan.Remaining != principal {
-		t.Fatalf("invalid remaining amount: %d", loan.Remaining)
-	}
-	return loan
+	t.Logf("[Setup] Create loan: principal=%d, rate=10, ROI=8; want status=PROPOSED", principal)
+	r, err := s.Create(context.Background(), v1.LoanCreateRequest{BorrowerID: "borrower", PrincipalAmount: principal, Rate: floatPointer(10), ROI: floatPointer(8), AgreementURL: "https://example.com/a.pdf"})
+	require.NoError(t, err)
+	require.NotEmpty(t, r.LoanNo)
+	t.Logf("[Result] Loan created: loan_no=%s", r.LoanNo)
+	return model.Loan{LoanNo: r.LoanNo}
 }
-func approve(t *testing.T, s service.Service, id string) {
+func approve(t *testing.T, s service.Service, no string) {
 	t.Helper()
-	if e := s.Approve(context.Background(), id, "staff", v1.ApprovalRequest{VisitProofURL: "https://example.com/a.jpg", ApprovedAt: time.Now()}); e != nil {
-		t.Fatal(e)
-	}
+	t.Logf("[Run] Approve loan=%s, staff=staff; want PROPOSED -> APPROVED", no)
+	require.NoError(t, s.Approve(context.Background(), no, "staff", v1.ApprovalRequest{VisitProofURL: "https://example.com/v.jpg"}))
+	t.Log("[Pass] Approval succeeded")
 }
 func inv(key string, amount int64) v1.InvestmentRequest {
-	return v1.InvestmentRequest{InvestorID: "investor", Email: "i@example.com", Key: key, Amount: amount}
+	return v1.InvestmentRequest{Key: key, Amount: amount, Email: "i@example.com"}
 }
-func TestLifecycleAndIdempotency(t *testing.T) {
-	s, p := setup(t)
-	c := context.Background()
-	l := create(t, s, 100)
-	if _, e := s.Invest(c, loanID(l.ID), inv("early", 1)); !errors.Is(e, v1.ErrState) {
-		t.Fatal(e)
-	}
-	if e := s.Disburse(c, loanID(l.ID), v1.DisbursementRequest{EmployeeID: "staff", AgreementURL: "https://example.com/s.pdf", At: time.Now()}); !errors.Is(e, v1.ErrState) {
-		t.Fatal(e)
-	}
-	approve(t, s, loanID(l.ID))
-	if e := s.Approve(c, loanID(l.ID), "staff", v1.ApprovalRequest{VisitProofURL: "https://example.com/a.jpg", ApprovedAt: time.Now()}); !errors.Is(e, v1.ErrState) {
-		t.Fatal(e)
-	}
-	a, e := s.Invest(c, loanID(l.ID), inv("first", 40))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if a.Total != 40 || a.Status != model.Approved {
-		t.Fatal(a)
-	}
-	if _, e = s.Invest(c, loanID(l.ID), inv("too-much", 61)); !errors.Is(e, v1.ErrAmount) {
-		t.Fatal(e)
-	}
-	b, e := s.Invest(c, loanID(l.ID), inv("second", 60))
-	if e != nil || b.Status != model.Invested {
-		t.Fatal(b, e)
-	}
-	retry, e := s.Invest(c, loanID(l.ID), inv("first", 40))
-	if e != nil || retry != a {
-		t.Fatal(retry, e)
-	}
-	if _, e = s.Invest(c, loanID(l.ID), inv("first", 41)); !errors.Is(e, v1.ErrIdempotency) {
-		t.Fatal(e)
-	}
-	if e = s.Disburse(c, loanID(l.ID), v1.DisbursementRequest{EmployeeID: "staff", AgreementURL: "https://example.com/s.pdf", At: time.Now()}); e != nil {
-		t.Fatal(e)
-	}
-	if e = s.Disburse(c, loanID(l.ID), v1.DisbursementRequest{EmployeeID: "staff", AgreementURL: "https://example.com/s.pdf", At: time.Now()}); !errors.Is(e, v1.ErrState) {
-		t.Fatal(e)
-	}
-	var history, outbox int
-	if e = p.WithContext(c).Raw("SELECT count(*) FROM loan_status_history WHERE loan_id=?", loanID(l.ID)).Row().Scan(&history); e != nil {
-		t.Fatal(e)
-	}
-	if e = p.WithContext(c).Raw("SELECT count(*) FROM notification_outbox WHERE loan_id=?", loanID(l.ID)).Row().Scan(&outbox); e != nil {
-		t.Fatal(e)
-	}
-	if history != 4 || outbox != 1 {
-		t.Fatal(history, outbox)
-	}
-	sender := &fakeSender{fail: true}
-	w := notification.Worker{DB: p, Sender: sender}
-	if e = w.Once(c); e == nil {
-		t.Fatal("expected mail failure")
-	}
-	var delivered bool
-	if e = p.WithContext(c).Raw("SELECT delivered_at IS NOT NULL FROM notification_outbox").Row().Scan(&delivered); e != nil || delivered {
-		t.Fatal(delivered, e)
-	}
-	if e = p.WithContext(c).Exec("UPDATE notification_outbox SET available_at=now()").Error; e != nil {
-		t.Fatal(e)
-	}
-	sender.fail = false
-	if e = w.Once(c); e != nil {
-		t.Fatal(e)
-	}
-	if e = w.Once(c); e != nil {
-		t.Fatal(e)
-	}
-	if sender.calls != 2 {
-		t.Fatal(sender.calls)
-	}
+func storedLoan(t *testing.T, db *gorm.DB, no string) model.Loan {
+	t.Helper()
+	var l model.Loan
+	require.NoError(t, db.Where("loan_no = ?", no).Take(&l).Error)
+	t.Logf("[DB] loan=%s, status=%s, principal=%d, invested=%d, remaining=%d", l.LoanNo, l.Status, l.PrincipalAmount, l.InvestedAmount, l.PrincipalAmount-l.InvestedAmount)
+	return l
 }
 
-type fakeSender struct {
-	fail  bool
-	calls int
-}
-
-func (s *fakeSender) Send(context.Context, string, string, string) error {
-	s.calls++
-	if s.fail {
-		return errors.New("mail down")
-	}
-	return nil
-}
-func TestConcurrentFunding(t *testing.T) {
-	s, p := setup(t)
-	l := create(t, s, 100)
-	approve(t, s, loanID(l.ID))
-	ctx := context.Background()
-	var wg sync.WaitGroup
-	var successes atomic.Int64
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			_, e := s.Invest(ctx, loanID(l.ID), inv(fmt.Sprintf("concurrent-%d", i), 10))
-			if e == nil {
-				successes.Add(1)
-			} else if !errors.Is(e, v1.ErrState) {
-				t.Errorf("unexpected error: %v", e)
-			}
-		}(i)
-	}
-	wg.Wait()
-	got, e := s.Get(ctx, loanID(l.ID))
-	if e != nil || successes.Load() != 10 || got.InvestedAmount != 100 || got.Status != model.Invested {
-		t.Fatal(got, e, successes.Load())
-	}
-	var total int64
-	if e = p.WithContext(ctx).Raw("SELECT sum(amount) FROM loan_investments WHERE loan_id=?", loanID(l.ID)).Row().Scan(&total); e != nil || total != got.InvestedAmount {
-		t.Fatal(total, e)
-	}
-}
-func TestConcurrentDuplicateAndCrossLoanKey(t *testing.T) {
-	s, _ := setup(t)
-	l := create(t, s, 100)
-	approve(t, s, loanID(l.ID))
-	c := context.Background()
-	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			v, e := s.Invest(c, loanID(l.ID), inv("same-key", 10))
-			if e != nil || v.Total != 10 {
-				t.Errorf("duplicate result: %+v %v", v, e)
-			}
-		}()
-	}
-	wg.Wait()
-	got, e := s.Get(c, loanID(l.ID))
-	if e != nil || got.InvestedAmount != 10 {
-		t.Fatal(got, e)
-	}
-	other := create(t, s, 100)
-	approve(t, s, loanID(other.ID))
-	if _, e = s.Invest(c, loanID(other.ID), inv("same-key", 10)); !errors.Is(e, v1.ErrIdempotency) {
-		t.Fatal(e)
-	}
-}
-func TestHTTPLifecycle(t *testing.T) {
-	s, p := setup(t)
-	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
-	baseHandler := handler.NewHandler(logger)
-	httpServer, cleanup, err := server.NewHTTPServer(context.Background(), &config.Config{
-		HTTPAddr: ":8080",
-		Auth: map[string]model.Identity{
-			"staff":    {ID: "staff", Role: "staff"},
-			"investor": {ID: "investor", Role: "investor", Email: "i@example.com"},
-		},
-	}, logger, handler.NewLoanHandler(baseHandler, s), handler.NewInvestmentHandler(baseHandler, s), p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	router := httpServer.Handler
-
-	call := func(path, token, body string, want int) []byte {
-		t.Helper()
-		req := httptest.NewRequest("POST", path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Idempotency-Key", "http-investment")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != want {
-			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
-		}
-		return w.Body.Bytes()
-	}
-	data := call("/api/v1/loans", "staff", `{"borrower_id":"borrower","principal_amount":100,"rate":10,"roi":8,"agreement_url":"https://example.com/loan.pdf"}`, 200)
-	var response struct {
-		Data model.Loan `json:"data"`
-	}
-	if e := json.Unmarshal(data, &response); e != nil {
-		t.Fatal(e)
-	}
-	loan := response.Data
-	base := fmt.Sprintf("/api/v1/loans/%s", loanID(loan.ID))
-	call(base+"/approval", "staff", fmt.Sprintf(`{"validator_employee_id":"staff","visit_proof_url":"https://example.com/a.jpg","approved_at":%q}`, time.Now().Format(time.RFC3339Nano)), 200)
-	call(base+"/investments", "investor", `{"investor_id":"investor","amount":100}`, 201)
-	call(base+"/disbursement", "staff", fmt.Sprintf(`{"officer_employee_id":"staff","signed_agreement_url":"https://example.com/a.pdf","disbursed_at":%q}`, time.Now().Format(time.RFC3339Nano)), 200)
-	call(base+"/investments", "investor", `{"investor_id":"investor","amount":100}`, 201)
-	got, e := s.Get(context.Background(), loanID(loan.ID))
-	if e != nil || got.Status != model.Disbursed {
-		t.Fatal(got, e)
-	}
-}
-func TestConcurrentOverInvestment(t *testing.T) {
-	s, _ := setup(t)
-	l := create(t, s, 100)
-	approve(t, s, loanID(l.ID))
-	var wg sync.WaitGroup
-	var successes atomic.Int64
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			_, e := s.Invest(context.Background(), loanID(l.ID), inv(fmt.Sprintf("over-%d", i), 80))
-			if e == nil {
-				successes.Add(1)
-			} else if !errors.Is(e, v1.ErrAmount) {
-				t.Errorf("unexpected error %v", e)
-			}
-		}(i)
-	}
-	wg.Wait()
-	got, e := s.Get(context.Background(), loanID(l.ID))
-	if e != nil || got.InvestedAmount != 80 || successes.Load() != 1 {
-		t.Fatal(got, e, successes.Load())
-	}
-}
-
-func floatPointer(value float64) *decimal.Decimal { d := decimal.NewFromFloat(value); return &d }
-
-func TestConcurrentCrossLoanIdempotencyKey(t *testing.T) {
-	svc, db := setup(t)
-	loans := []model.Loan{create(t, svc, 100), create(t, svc, 100)}
-	for _, loan := range loans {
-		approve(t, svc, loanID(loan.ID))
-	}
+// Each callback uses the production pool and opens its own service transaction.
+func concurrently(n int, fn func(int) error) []error {
 	start := make(chan struct{})
-	results := make(chan error, len(loans))
-	for _, loan := range loans {
-		go func(id string) {
-			<-start
-			_, err := svc.Invest(context.Background(), id, inv("cross-loan-race", 10))
-			results <- err
-		}(loanID(loan.ID))
+	results := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); <-start; results[i] = fn(i) }(i)
 	}
 	close(start)
-	successes, conflicts := 0, 0
-	for range loans {
-		err := <-results
-		switch {
-		case err == nil:
+	wg.Wait()
+	return results
+}
+func TestInvestmentLifecycleAndIdempotency(t *testing.T) {
+	s, db := setup(t)
+	c := context.Background()
+	l := create(t, s, 100)
+	t.Log("[Run] Invest 1 before approval; want ErrState")
+	_, err := s.Invest(c, l.LoanNo, "investor", inv("early", 1))
+	t.Logf("[Result] error=%v", err)
+	require.ErrorIs(t, err, v1.ErrState)
+	approve(t, s, l.LoanNo)
+	for _, amount := range []int64{0, -1} {
+		t.Logf("[Run] Invest amount=%d; want ErrRequestParams", amount)
+		_, err = s.Invest(c, l.LoanNo, "investor", inv(fmt.Sprint(amount), amount))
+		require.ErrorIs(t, err, v1.ErrRequestParams)
+	}
+	first, err := s.Invest(c, l.LoanNo, "investor", inv("first", 40))
+	t.Logf("[Result] Invest 40; want APPROVED, invested=40, remaining=60; actual=%+v, error=%v", first, err)
+	require.NoError(t, err)
+	require.Equal(t, model.Approved, first.Status)
+	require.EqualValues(t, 60, first.RemainingAmount)
+	_, err = s.Invest(c, l.LoanNo, "investor", inv("over", 61))
+	require.ErrorIs(t, err, v1.ErrAmount)
+	last, err := s.Invest(c, l.LoanNo, "investor", inv("last", 60))
+	t.Logf("[Result] Invest 60; want INVESTED, invested=100, remaining=0; actual=%+v, error=%v", last, err)
+	require.NoError(t, err)
+	require.Equal(t, model.Invested, last.Status)
+	retry, err := s.Invest(c, l.LoanNo, "investor", inv("first", 40))
+	t.Logf("[Result] Retry first key; want original result, no new row; actual=%+v, error=%v", retry, err)
+	require.NoError(t, err)
+	require.Equal(t, first, retry)
+	for _, tc := range []struct {
+		investor string
+		req      v1.InvestmentRequest
+	}{{"investor", inv("first", 41)}, {"other", inv("first", 40)}, {"investor", v1.InvestmentRequest{Key: "first", Amount: 40, Email: "other@example.com"}}} {
+		t.Logf("[Run] Reuse first key with changed data: investor=%s, amount=%d, email=%s; want ErrIdempotency", tc.investor, tc.req.Amount, tc.req.Email)
+		_, err = s.Invest(c, l.LoanNo, tc.investor, tc.req)
+		t.Logf("[Result] error=%v", err)
+		require.ErrorIs(t, err, v1.ErrIdempotency)
+	}
+	other := create(t, s, 100)
+	approve(t, s, other.LoanNo)
+	_, err = s.Invest(c, other.LoanNo, "investor", inv("first", 40))
+	require.ErrorIs(t, err, v1.ErrIdempotency)
+	require.EqualValues(t, 100, storedLoan(t, db, l.LoanNo).InvestedAmount)
+	assertTableCount(t, db, "investments", 2)
+	assertTableCount(t, db, "notification_outbox", 1)
+	var h int64
+	require.NoError(t, db.Model(&model.LoanStatusHistory{}).Where("loan_no = ? AND action = ?", l.LoanNo, model.ActionFullyFunded).Count(&h).Error)
+	t.Logf("[Check] Funding history count=%d, want=1", h)
+	require.EqualValues(t, 1, h)
+}
+func TestConcurrentFunding(t *testing.T) {
+	s, db := setup(t)
+	l := create(t, s, 100)
+	approve(t, s, l.LoanNo)
+	t.Log("[Run] Start 32 investors together, amount=10, principal=100; want 10 successes and 22 ErrState errors")
+	results := concurrently(32, func(i int) error {
+		_, err := s.Invest(context.Background(), l.LoanNo, fmt.Sprintf("investor-%d", i), inv(fmt.Sprintf("key-%d", i), 10))
+		return err
+	})
+	successes := 0
+	for i, err := range results {
+		t.Logf("[Result] Request[%d] error=%v; want success or ErrState", i, err)
+		if err == nil {
 			successes++
-		case errors.Is(err, v1.ErrIdempotency):
-			conflicts++
-		default:
-			t.Fatalf("unexpected key-race error: %v", err)
+		} else {
+			require.ErrorIs(t, err, v1.ErrState)
 		}
 	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("got %d successes, %d conflicts", successes, conflicts)
+	require.Equal(t, 10, successes)
+	got := storedLoan(t, db, l.LoanNo)
+	require.Equal(t, model.Invested, got.Status)
+	require.EqualValues(t, 100, got.InvestedAmount)
+	var total int64
+	require.NoError(t, db.Model(&model.Investment{}).Select("COALESCE(SUM(amount),0)").Scan(&total).Error)
+	require.Equal(t, got.InvestedAmount, total)
+	assertTableCount(t, db, "investments", 10)
+	assertTableCount(t, db, "loan_status_history", 3)
+	assertTableCount(t, db, "notification_outbox", 10)
+}
+func TestConcurrentDuplicateInvestment(t *testing.T) {
+	s, db := setup(t)
+	l := create(t, s, 100)
+	approve(t, s, l.LoanNo)
+	values := make([]*v1.InvestmentResult, 16)
+	t.Log("[Run] Start 16 requests with the same key, amount=100; want equal results, 1 investment, and 1 notice")
+	errs := concurrently(16, func(i int) error {
+		var err error
+		values[i], err = s.Invest(context.Background(), l.LoanNo, "investor", inv("same", 100))
+		return err
+	})
+	for i, err := range errs {
+		t.Logf("[Retry] Request[%d] error=%v, result=%+v; want same result as first request", i, err, values[i])
+		require.NoError(t, err)
+		require.Equal(t, values[0], values[i])
 	}
-	var count int64
-	if err := db.Table("loan_investments").Count(&count).Error; err != nil || count != 1 {
-		t.Fatalf("count %d, error %v", count, err)
+	require.EqualValues(t, 100, storedLoan(t, db, l.LoanNo).InvestedAmount)
+	assertTableCount(t, db, "investments", 1)
+	assertTableCount(t, db, "notification_outbox", 1)
+	assertTableCount(t, db, "loan_status_history", 3)
+}
+func TestConcurrentOverInvestment(t *testing.T) {
+	t.Log("[Case] Two requests invest 80 each, principal=100; want 1 success, 1 ErrAmount, invested=80")
+	s, db := setup(t)
+	l := create(t, s, 100)
+	approve(t, s, l.LoanNo)
+	errs := concurrently(2, func(i int) error {
+		_, err := s.Invest(context.Background(), l.LoanNo, "investor", inv(fmt.Sprint(i), 80))
+		return err
+	})
+	n := 0
+	for i, err := range errs {
+		t.Logf("[Result] Request[%d] error=%v", i, err)
+		if err == nil {
+			n++
+		} else {
+			require.ErrorIs(t, err, v1.ErrAmount)
+		}
+	}
+	require.Equal(t, 1, n)
+	got := storedLoan(t, db, l.LoanNo)
+	require.EqualValues(t, 80, got.InvestedAmount)
+	require.Equal(t, model.Approved, got.Status)
+	assertTableCount(t, db, "investments", 1)
+	assertTableCount(t, db, "notification_outbox", 0)
+}
+func TestConcurrentCrossLoanKey(t *testing.T) {
+	t.Log("[Case] Two loans use global-key for amount=10; wait before INSERT; want 1 success and 1 ErrIdempotency")
+	s, db := setup(t)
+	// Force both transactions past the key lookup before either INSERT executes.
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register("test:key_race", func(tx *gorm.DB) {
+		if tx.Statement.Table == "investments" {
+			arrived <- struct{}{}
+			<-release
+		}
+	}))
+	defer func() { require.NoError(t, db.Callback().Create().Remove("test:key_race")) }()
+	go func() { <-arrived; <-arrived; close(release) }()
+
+	loans := []model.Loan{create(t, s, 100), create(t, s, 100)}
+	for _, l := range loans {
+		approve(t, s, l.LoanNo)
+	}
+	errs := concurrently(2, func(i int) error {
+		_, err := s.Invest(context.Background(), loans[i].LoanNo, "investor", inv("global-key", 10))
+		return err
+	})
+	n := 0
+	for i, err := range errs {
+		t.Logf("[Result] Request[%d] error=%v", i, err)
+		if err == nil {
+			n++
+		} else {
+			require.ErrorIs(t, err, v1.ErrIdempotency)
+		}
+	}
+	require.Equal(t, 1, n)
+	assertTableCount(t, db, "investments", 1)
+	require.EqualValues(t, 10, storedLoan(t, db, loans[0].LoanNo).InvestedAmount+storedLoan(t, db, loans[1].LoanNo).InvestedAmount)
+}
+func TestTransitionsConcurrentAndTimestamps(t *testing.T) {
+	for _, transition := range []string{"approve", "disburse"} {
+		t.Run(transition, func(t *testing.T) {
+			s, db := setup(t)
+			l := create(t, s, 100)
+			c := context.Background()
+			if transition == "disburse" {
+				approve(t, s, l.LoanNo)
+				_, err := s.Invest(c, l.LoanNo, "investor", inv("fund", 100))
+				require.NoError(t, err)
+			}
+			t.Logf("[Run] Start 2 %s requests for one loan; want 1 success, 1 ErrState, 1 record, and 1 history row", transition)
+			before := time.Now().UnixMilli()
+			errs := concurrently(2, func(int) error {
+				if transition == "approve" {
+					return s.Approve(c, l.LoanNo, "staff", v1.ApprovalRequest{VisitProofURL: "https://example.com/a.jpg"})
+				}
+				return s.Disburse(c, l.LoanNo, "staff", v1.DisbursementRequest{AgreementURL: "https://example.com/a.pdf"})
+			})
+			after := time.Now().UnixMilli()
+			n := 0
+			for i, err := range errs {
+				t.Logf("[Result] Request[%d] error=%v", i, err)
+				if err == nil {
+					n++
+				} else {
+					require.ErrorIs(t, err, v1.ErrState)
+				}
+			}
+			require.Equal(t, 1, n)
+			var timestamp int64
+			var action model.Action
+			if transition == "approve" {
+				var a model.Approval
+				require.NoError(t, db.Take(&a).Error)
+				timestamp = a.ApprovedAt
+				require.Equal(t, "staff", a.EmployeeID)
+				assertTableCount(t, db, "approvals", 1)
+				require.Equal(t, model.Approved, storedLoan(t, db, l.LoanNo).Status)
+				action = model.ActionApprove
+			} else {
+				var d model.Disbursement
+				require.NoError(t, db.Take(&d).Error)
+				timestamp = d.DisbursedAt
+				require.Equal(t, "staff", d.OfficerEmployeeID)
+				assertTableCount(t, db, "disbursements", 1)
+				require.Equal(t, model.Disbursed, storedLoan(t, db, l.LoanNo).Status)
+				action = model.ActionDisburse
+			}
+			t.Logf("[Check] Server time=%d; want UnixMilli in [%d, %d]", timestamp, before, after)
+			require.GreaterOrEqual(t, timestamp, before)
+			require.LessOrEqual(t, timestamp, after)
+			var count int64
+			require.NoError(t, db.Model(&model.LoanStatusHistory{}).Where("action = ?", action).Count(&count).Error)
+			t.Logf("[Check] action=%s, count=%d, want=1", action, count)
+			require.EqualValues(t, 1, count)
+		})
+	}
+}
+func TestInvalidTransitionStates(t *testing.T) {
+	for _, status := range []model.Status{model.Proposed, model.Approved, model.Invested, model.Disbursed} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Logf("[Case] status=%s; approve requires PROPOSED, disburse requires INVESTED; want ErrState otherwise and no DB change", status)
+			s, db := setup(t)
+			l := create(t, s, 100)
+			require.NoError(t, db.Model(&model.Loan{}).Where("loan_no = ?", l.LoanNo).Update("status", status).Error)
+			if status != model.Proposed {
+				require.ErrorIs(t, s.Approve(context.Background(), l.LoanNo, "staff", v1.ApprovalRequest{}), v1.ErrState)
+			}
+			if status != model.Invested {
+				require.ErrorIs(t, s.Disburse(context.Background(), l.LoanNo, "staff", v1.DisbursementRequest{}), v1.ErrState)
+			}
+			require.Equal(t, status, storedLoan(t, db, l.LoanNo).Status)
+			assertTableCount(t, db, "approvals", 0)
+			assertTableCount(t, db, "disbursements", 0)
+			assertTableCount(t, db, "loan_status_history", 1)
+		})
+	}
+}
+func TestCreateHistoryFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "create", "loan_status_history")
+}
+
+func TestApproveRecordFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "approve", "approvals")
+}
+
+func TestApproveHistoryFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "approve", "loan_status_history")
+}
+
+func TestInvestRecordFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "invest", "investments")
+}
+
+func TestInvestHistoryFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "invest", "loan_status_history")
+}
+
+func TestInvestOutboxFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "invest", "notification_outbox")
+}
+
+func TestDisburseRecordFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "disburse", "disbursements")
+}
+
+func TestDisburseHistoryFailureRollsBack(t *testing.T) {
+	assertTransactionFailureRollback(t, "disburse", "loan_status_history")
+}
+
+func assertTransactionFailureRollback(t *testing.T, op, tableName string) {
+	t.Helper()
+	t.Logf("[1/5 Setup] action=%s, failing table=%s", op, tableName)
+	s, db := setup(t)
+	c := context.Background()
+	l := create(t, s, 100)
+	if op == "invest" || op == "disburse" {
+		approve(t, s, l.LoanNo)
+	}
+	if op == "disburse" {
+		_, err := s.Invest(c, l.LoanNo, "investor", inv("fund", 100))
+		require.NoError(t, err)
+	}
+	before := storedLoan(t, db, l.LoanNo)
+	tables := []string{"loans", "approvals", "investments", "disbursements", "loan_status_history", "notification_outbox"}
+	counts := make([]int64, len(tables))
+	for i, table := range tables {
+		require.NoError(t, db.Table(table).Count(&counts[i]).Error)
+		t.Logf("[2/5 Before] table=%s, row count=%d", table, counts[i])
+	}
+	t.Logf("[3/5 Fail] Add CHECK(false) NOT VALID to test table %s; keep old rows, reject new writes", tableName)
+	// NOT VALID leaves existing rows intact, but rejects every subsequent INSERT.
+	require.NoError(t, db.Exec("ALTER TABLE "+tableName+" ADD CONSTRAINT reject_test CHECK (false) NOT VALID").Error)
+	var err error
+	switch op {
+	case "create":
+		_, err = s.Create(c, v1.LoanCreateRequest{BorrowerID: "rollback", PrincipalAmount: 100, Rate: floatPointer(10), ROI: floatPointer(8)})
+	case "approve":
+		err = s.Approve(c, l.LoanNo, "staff", v1.ApprovalRequest{})
+	case "invest":
+		_, err = s.Invest(c, l.LoanNo, "investor", inv("rollback", 100))
+	case "disburse":
+		err = s.Disburse(c, l.LoanNo, "staff", v1.DisbursementRequest{})
+	}
+	t.Logf("[4/5 Result] %s error=%v; want failure and full rollback", op, err)
+	require.Error(t, err)
+	t.Logf("[5/5 Check] Want loan status=%s, invested=%d, and all row counts unchanged", before.Status, before.InvestedAmount)
+	require.Equal(t, before, storedLoan(t, db, l.LoanNo))
+	for i, table := range tables {
+		assertTableCount(t, db, table, counts[i])
 	}
 }

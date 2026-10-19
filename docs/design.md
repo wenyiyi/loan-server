@@ -1,23 +1,216 @@
-# 设计说明
+# Loan Service Design
 
-模块化单体：Gin → Service → Repository → PostgreSQL。领域状态只能按 `PROPOSED → APPROVED → INVESTED → DISBURSED` 转换。审批和放款保存材料、员工和业务日期，审计表保存状态变化。
+The service manages loans from creation to disbursement. It uses Go, Gin, GORM, and PostgreSQL.
 
-投资事务首先 `SELECT ... FOR UPDATE` 锁贷款，再检查持久化幂等记录，校验状态和余额，写投资明细、更新汇总及状态。满额时在同一事务生成审计和按投资者去重的 Outbox 行。任何步骤失败全部回滚，外部邮件发送不在该事务内。
+## Menu
 
-同贷款的并发幂等请求由贷款行锁串行化。跨贷款相同 key 的竞争由数据库唯一约束裁决；失败事务先回滚，再查询已提交记录，返回幂等冲突。首次响应 JSON 持久化，因此重试不依赖当前贷款状态。
+- [1. App structure](#1-app-structure)
+- [2. Loan states](#2-loan-states)
+- [3. Create, approve, and disburse](#3-create-approve-and-disburse)
+- [4. Investment flow](#4-investment-flow)
+- [5. Duplicate requests](#5-duplicate-requests)
+- [6. Email tasks](#6-email-tasks)
+- [7. Data and migrations](#7-data-and-migrations)
+- [8. Auth and logs](#8-auth-and-logs)
+- [9. Startup and config](#9-startup-and-config)
+- [10. Tests](#10-tests)
+- [11. Limits](#11-limits)
 
-数据库约束兜底本金额度、状态枚举、利率和满额条件；投资合计这一跨表不变量由统一写入事务维护。应避免其他系统直接写表。审批/放款的主键确保每贷款只有一份记录。
+## 1. App structure
 
-Outbox 通过 `FOR UPDATE SKIP LOCKED` 原子领取，租约过期可重新领取。随机租约 token 避免旧执行者确认新租约。失败后持久化退避，成功后记录 delivered_at。SMTP 无跨系统原子提交能力，因此采用至少一次投递，不能宣称严格一次。
+The app has one codebase and two entry points:
 
-数据访问采用 GORM：统一 model 映射现有 PostgreSQL 表并直接用于响应，使用 WithContext 传播取消与超时，Transaction 管理提交/回滚，clause.Locking 保留贷款行锁。批量 Outbox 入队及租约领取保留原子 SQL，并统一通过 GORM 执行。不引入 Redis 或消息队列。静态 Bearer 认证实现便于本地验证，生产需接入身份服务。协议生成/对象存储、实际资金渠道、偿还、币种转换、自动扩缩容与端到端邮件送达确认不在当前范围。
+| Entry point | Job |
+| --- | --- |
+| `cmd/server` | Serve HTTP requests |
+| `cmd/worker` | Send loan agreement emails |
 
-API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewConfig` 只加载单个 YAML 文件，默认 config/local.yml，测试使用 config/test.yml，不读取环境变量覆盖，`repository.NewDB` 管理数据库连接，`internal/server` 组装路由，`internal/middleware` 提供认证、角色授权、请求日志和链路关联。每张表有独立 Repository：Loan、Approval、Disbursement、Investment、LoanStatusHistory 和 NotificationOutbox，各自只访问对应表。Service 编排跨表业务，并把同一个事务连接传给各 Repository。
+```mermaid
+flowchart LR
+    Client --> Handler[Gin Handler]
+    Handler --> Service
+    Service --> Repository
+    Repository --> DB[(PostgreSQL)]
+    Worker --> DB
+    Worker --> SMTP
+```
 
-风格参考 marvel-main：使用 New 构造函数，入口通过 Google Wire 生成依赖注入代码（cmd/server/wire 和 cmd/worker/wire），使用 provider sets 和 NewWire，资源由 cleanup 释放，handler 使用 api/v1 的统一响应，zap 日志通过请求 context 关联 trace_id。贷款和投资 ID 在 Go 与 JSON 边界统一为字符串，PostgreSQL 保持 BIGSERIAL；金额保持 int64。
+| Layer | Job | Code |
+| --- | --- | --- |
+| Handler | Read input, check input, read user identity, return a response | `internal/handler` |
+| Service | Apply business rules and manage transactions | `internal/service` |
+| Repository | Read and write tables with GORM | `internal/repository` |
+| Model | Define table fields and loan states | `internal/model` |
+| Middleware | Check auth and roles, add request logs and trace data | `internal/middleware` |
 
-数据库结构继续由 SQL migrations 管理，不在启动时调用 AutoMigrate。GORM 的 SQL 日志关闭以避免输出业务参数。rate/roi 使用 numeric(10,6)，自增主键使用 bigint；应用时间字段使用 Unix 毫秒整数。Compose 只挂载 001_init.up.sql；001_init.down.sql 仅用于显式手动回滚，不在正常启动时执行。
+Each table has its own repository. A service transaction gives all repositories the same transaction connection. If any step fails, all writes in that transaction roll back.
 
-模型集中在 internal/model，不再保留 domain 层及模型转换。Loan 的 remaining_amount 通过 GORM hooks 计算，标记 gorm:"-" 不参与持久化；投资明细直接返回 LoanInvestment，敏感字段由 json:"-" 排除。
+## 2. Loan states
 
-集成测试通过 integration 构建标签启用，读取 config/test.yml 中的 database.url，默认与本地应用共用数据库及账号。测试先校验连接实际数据库，再在随机 schema 中执行全部 SQL 迁移，通过真实 HTTP 路由覆盖完整链路。清理由关闭连接后 DROP SCHEMA 完成，不依赖外层事务覆盖 Service 的业务事务。
+```mermaid
+stateDiagram-v2
+    [*] --> PROPOSED: Create
+    PROPOSED --> APPROVED: Approve
+    APPROVED --> INVESTED: Fully funded
+    INVESTED --> DISBURSED: Disburse
+```
+
+| Action | Required state | Result |
+| --- | --- | --- |
+| Create | No loan yet | Create a `PROPOSED` loan |
+| Approve | `PROPOSED` | Set `APPROVED` |
+| Invest | `APPROVED` | Keep `APPROVED` until the loan is full, then set `INVESTED` |
+| Disburse | `INVESTED` | Set `DISBURSED` |
+
+A new action in the wrong state returns `ErrState`. An exact investment retry returns its saved result, even if the loan state has since changed.
+
+## 3. Create, approve, and disburse
+
+| Action | Writes in one transaction | Concurrency control |
+| --- | --- | --- |
+| Create | Loan and `CREATE` history | Unique loan number |
+| Approve | Status, approval record, and `APPROVE` history | Update only when the current status is `PROPOSED` |
+| Disburse | Disbursement record, status, and `DISBURSE` history | Lock the loan row and require `INVESTED` |
+
+The create handler requires a positive principal. Rate and ROI must be between 0 and 100. ROI must not exceed Rate.
+
+Approval and disbursement use the staff ID from auth. The service sets `ApprovedAt` and `DisbursedAt` with `time.Now().UnixMilli()`. Client fields cannot replace these values.
+
+Two requests cannot approve or disburse the same loan twice through these service methods. One succeeds; the other returns `ErrState`.
+
+## 4. Investment flow
+
+Each investment runs in one database transaction:
+
+1. Lock the loan with `SELECT ... FOR UPDATE`.
+2. Look up the idempotency key.
+3. Return the saved result for an exact retry. Reject changed request data.
+4. Require `APPROVED`, a positive amount, and enough remaining principal.
+5. Insert the investment.
+6. Update the loan's invested amount and status.
+7. Save the response JSON for future retries.
+8. If the loan is full, write `FULLY_FUNDED` history and email tasks.
+9. Commit all writes together.
+
+Requests for the same loan wait for the same row lock. Each request reads the latest committed balance before it adds money. This prevents over-investment and lost updates through the service.
+
+If any write fails, the investment, loan update, history, and email tasks all roll back. Email is sent later, outside this transaction.
+
+## 5. Duplicate requests
+
+The investment endpoint requires an `Idempotency-Key` header. The key is unique across all investments, including investments in different loans.
+
+| Request | Result |
+| --- | --- |
+| New key and valid input | Create one investment and save its response |
+| Same key, loan, investor, email, and amount | Return the saved response; add no rows |
+| Same key with changed data | Return `ErrIdempotency` |
+| Same key used at once for different loans | The database unique index picks one winner; the other returns `ErrIdempotency` |
+
+Requests for the same loan use the loan row lock. Requests for different loans use different locks, so the unique key index handles their key conflict. The repository maps that specific unique index error to `ErrIdempotency`.
+
+## 6. Email tasks
+
+When a loan becomes full, the service adds one Outbox task per investor. Several investments by the same investor produce one task for that loan and notification type.
+
+The worker uses this flow:
+
+1. Claim a ready task with atomic SQL and `FOR UPDATE SKIP LOCKED`.
+2. Set a random lease token and move `available_at` forward by 60 seconds.
+3. Send the email with a 10-second timeout.
+4. On success, set `delivered_at` and clear the token.
+5. On failure, clear the token and delay the next attempt.
+
+The retry delay is `min(attempts, 60) * 10` seconds. An expired lease allows another worker to claim the task. Complete and retry updates must match the current token, so an old worker cannot change a newer lease.
+
+The current SQL uses `available_at` for both retry time and lease expiry. The model also has `lease_until`, but the worker does not use it.
+
+Email delivery is **at least once**. A crash after sending but before saving success can cause another email. A stable Message-ID helps identify duplicates, but does not guarantee one delivery.
+
+## 7. Data and migrations
+
+| Table | Stores |
+| --- | --- |
+| `loans` | Loan number, borrower, amounts, rates, agreement URL, and status |
+| `approvals` | Loan number, staff ID, visit proof URL, and approval time |
+| `investments` | Investor, amount, unique request key, and saved response |
+| `disbursements` | Loan number, staff ID, signed agreement URL, and disbursement time |
+| `loan_status_history` | Previous state, new state, action, and time |
+| `notification_outbox` | Email tasks, attempts, lease data, and delivery time |
+
+Data types and rules:
+
+- `loan_no` is a 22-character string used in API paths and table links.
+- Internal row IDs use PostgreSQL `BIGSERIAL` and Go `int64`.
+- Amounts use `int64`. Rate and ROI use `numeric(10,6)` and Go decimals.
+- App timestamps use Unix milliseconds.
+- `remaining_amount` is not stored. It is principal minus invested amount. The current loan model does not have a hook that fills this field after a read.
+- Handlers return small response types for loan creation and investment. Hidden model fields use `json:"-"`.
+
+Unique indexes protect loan numbers, investment keys, one disbursement per loan, and one Outbox task per loan/investor/type. Other business checks, such as valid states and investment limits, run in the handler or service. The current migration does not add foreign keys or CHECK constraints for these rules. Direct table writes can bypass them.
+
+SQL files in `migrations` manage the schema. The app does not call `AutoMigrate` at startup. Compose runs only `001_init.up.sql` when it first creates the database volume. An existing volume needs an explicit migration step. `001_init.down.sql` drops tables and is for an intentional manual rollback only.
+
+## 8. Auth and logs
+
+Business routes require a Bearer token. The current auth code maps configured tokens to trusted identities.
+
+| Role | Allowed actions |
+| --- | --- |
+| Staff | Create, approve, and disburse loans |
+| Investor | Invest in loans |
+
+Staff IDs, investor IDs, and investor emails come from auth. The service does not trust these values from request JSON.
+
+Handlers use the shared response format in `api/v1`. Public errors have HTTP status codes and business codes. Internal errors return a general message without database details.
+
+Zap logs use request context for request and trace data. GORM SQL logs are off to avoid logging business values. `/healthz` checks the HTTP process; `/readyz` checks the database connection.
+
+## 9. Startup and config
+
+`config.NewConfig` reads one YAML file. The default is `config/local.yml`. The server and worker accept `-conf` to choose another file. Files are not merged, and environment variables do not replace their values.
+
+Google Wire builds the dependencies in `cmd/server/wire` and `cmd/worker/wire`. Constructors use `New...` functions and provider sets. Cleanup functions close database connections and flush tracing. The server handles shutdown signals and stops HTTP requests cleanly.
+
+`repository.NewDB` opens and checks the PostgreSQL connection pool. GORM `WithContext` passes request cancellation and deadlines to database calls.
+
+## 10. Tests
+
+| Test type | Dependencies | Main checks |
+| --- | --- | --- |
+| Unit | No database; stubs where needed | Input rules, amount and state calculation, key lookup, error responses |
+| Integration | Real PostgreSQL | Transactions, concurrent requests, unique keys, final rows, HTTP auth, and Outbox leases |
+
+Integration tests use the existing database from `config/local.yml`. They do not create another database. Each test creates a random schema, applies the SQL migrations there, closes its connections, and removes only that schema.
+
+Concurrent service calls use separate transactions from the connection pool. Tests use start channels and wait groups, not sleeps. They check final amounts, states, record counts, history, and Outbox rows. Failure tests add constraints only to their own test tables to check rollback. Email tests use a fake sender.
+
+Run from the project root:
+
+```sh
+# Unit tests, with step logs
+go test -v ./...
+
+# Unit tests with race checks
+go test -race ./...
+
+# PostgreSQL tests, with step logs and race checks
+go test -tags=integration -v -race -count=1 -timeout=120s ./tests/integration
+
+# One approval rollback test
+go test -tags=integration -v ./tests/integration -run '^TestApproveRecordFailureRollsBack$'
+```
+
+GoLand needs `integration` in its custom build tags to show integration test files as active. Saved run configs in `.run` include the tag and verbose output.
+
+## 11. Limits
+
+The current app does not include:
+
+- A production identity provider.
+- Agreement file creation or object storage.
+- Real money transfers, repayments, or currency conversion.
+- Redis, an external message queue, or automatic scaling.
+- A guarantee that an email reaches the inbox exactly once.
+
+Real SMTP delivery, process crashes during email delivery, and a full migration/model comparison still need more test coverage.

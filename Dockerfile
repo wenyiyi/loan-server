@@ -11,6 +11,6 @@ USER app
 COPY --from=build /server /server
 COPY --from=build /worker /worker
 WORKDIR /app
-COPY config/local.yml config/test.yml ./config/
+COPY config/local.yml ./config/
 EXPOSE 8080
 ENTRYPOINT ["/server"]
