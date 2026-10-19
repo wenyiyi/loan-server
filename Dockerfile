@@ -10,5 +10,7 @@ RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
 USER app
 COPY --from=build /server /server
 COPY --from=build /worker /worker
+WORKDIR /app
+COPY config/local.yml config/test.yml ./config/
 EXPOSE 8080
 ENTRYPOINT ["/server"]

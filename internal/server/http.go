@@ -32,7 +32,6 @@ func NewHTTPServer(
 		middleware.RequestLogMiddleware(logger),
 		gin.CustomRecovery(func(ctx *gin.Context, _ any) { v1.HandleInternalError(ctx) }),
 	)
-	engine.GET("/health", health)
 	engine.GET("/healthz", health)
 	engine.GET("/readyz", func(ctx *gin.Context) {
 		if err := ready(ctx.Request.Context()); err != nil {

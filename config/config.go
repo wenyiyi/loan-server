@@ -3,7 +3,6 @@ package config
 import (
 	applog "LoanService/pkg/log"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/mail"
@@ -12,7 +11,6 @@ import (
 
 	"LoanService/internal/model"
 
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,87 +24,80 @@ type Config struct {
 }
 
 type SMTPConfig struct {
-	Address, From, Username, Password string
-	AllowPlaintext                    bool
+	Address        string `yaml:"address"`
+	From           string `yaml:"from"`
+	Username       string `yaml:"username"`
+	Password       string `yaml:"password"`
+	AllowPlaintext bool   `yaml:"allow_plaintext"`
 }
 
 type TraceConfig struct {
-	Endpoint string
-	Name     string
+	Endpoint string `yaml:"endpoint"`
+	Name     string `yaml:"name"`
 }
 
-// NewConfig loads YAML configuration and environment overrides. APP_CONF overrides path.
-// An empty path allows an environment-only deployment.
+const DefaultPath = "config/local.yml"
+
+// NewConfig reads one YAML file. Environment variables never override its values.
 func NewConfig(path string) (*Config, error) {
-	if envPath := os.Getenv("APP_CONF"); envPath != "" {
-		path = envPath
+	if path == "" {
+		path = DefaultPath
 	}
-	conf := viper.New()
-	conf.SetDefault("http.addr", ":8080")
-	conf.SetDefault("trace.name", "amartha-loan-service")
-	conf.SetDefault("log.level", "info")
-	bindings := map[string]string{
-		"database.url": "DATABASE_URL", "auth.tokens": "AUTH_TOKENS", "http.addr": "HTTP_ADDR",
-		"smtp.address": "SMTP_ADDR", "smtp.from": "SMTP_FROM", "smtp.username": "SMTP_USERNAME",
-		"smtp.password": "SMTP_PASSWORD", "smtp.allow_plaintext": "SMTP_ALLOW_PLAINTEXT",
-		"trace.endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT", "trace.name": "OTEL_SERVICE_NAME", "log.level": "LOG_LEVEL",
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read configuration %s: %w", path, err)
 	}
-	for key, env := range bindings {
-		if err := conf.BindEnv(key, env); err != nil {
-			applog.Error(context.Background(), "config.NewConfig failed", err)
-			return nil, fmt.Errorf("bind configuration %s: %w", key, err)
-		}
+	var raw struct {
+		Database struct {
+			URL string `yaml:"url"`
+		} `yaml:"database"`
+		HTTP struct {
+			Addr string `yaml:"addr"`
+		} `yaml:"http"`
+		Auth struct {
+			Tokens map[string]model.Identity `yaml:"tokens"`
+		} `yaml:"auth"`
+		SMTP  SMTPConfig  `yaml:"smtp"`
+		Trace TraceConfig `yaml:"trace"`
+		Log   struct {
+			Level string `yaml:"level"`
+		} `yaml:"log"`
 	}
-	if path != "" {
-		conf.SetConfigFile(path)
-		if err := conf.ReadInConfig(); err != nil {
-			applog.Error(context.Background(), "config.NewConfig failed", err)
-			return nil, fmt.Errorf("read configuration: %w", err)
-		}
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode configuration %s: %w", path, err)
 	}
 	cfg := &Config{
-		DatabaseURL: conf.GetString("database.url"), HTTPAddr: conf.GetString("http.addr"), LogLevel: conf.GetString("log.level"),
-		SMTP:  SMTPConfig{Address: conf.GetString("smtp.address"), From: conf.GetString("smtp.from"), Username: conf.GetString("smtp.username"), Password: conf.GetString("smtp.password"), AllowPlaintext: conf.GetBool("smtp.allow_plaintext")},
-		Trace: TraceConfig{Endpoint: conf.GetString("trace.endpoint"), Name: conf.GetString("trace.name")},
+		DatabaseURL: raw.Database.URL, HTTPAddr: raw.HTTP.Addr, Auth: raw.Auth.Tokens,
+		SMTP: raw.SMTP, Trace: raw.Trace, LogLevel: raw.Log.Level,
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = ":8080"
+	}
+	if cfg.Trace.Name == "" {
+		cfg.Trace.Name = "amartha-loan-service"
+	}
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
 	}
 	if cfg.DatabaseURL == "" {
-		return nil, fmt.Errorf("database.url or DATABASE_URL required")
+		return nil, fmt.Errorf("database.url required in %s", path)
 	}
 	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
-		applog.Error(context.Background(), "config.NewConfig failed", err)
-		return nil, fmt.Errorf("invalid HTTP address")
-	}
-	// Read token keys directly: Viper normalizes map keys, but bearer tokens are case-sensitive.
-	if raw := os.Getenv("AUTH_TOKENS"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &cfg.Auth); err != nil {
-			applog.Error(context.Background(), "config.NewConfig failed", err)
-			return nil, fmt.Errorf("AUTH_TOKENS must be a JSON token to identity map")
-		}
-	} else if path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			applog.Error(context.Background(), "config.NewConfig failed", err)
-			return nil, fmt.Errorf("read authentication configuration: %w", err)
-		}
-		var raw struct {
-			Auth struct {
-				Tokens map[string]model.Identity `yaml:"tokens"`
-			} `yaml:"auth"`
-		}
-		if err := yaml.Unmarshal(data, &raw); err != nil {
-			applog.Error(context.Background(), "config.NewConfig failed", err)
-			return nil, fmt.Errorf("decode authentication configuration: %w", err)
-		}
-		cfg.Auth = raw.Auth.Tokens
+		return nil, fmt.Errorf("invalid http.addr in %s: %w", path, err)
 	}
 	return cfg, nil
 }
 
 func (c *Config) ValidateAuth() error {
 	if len(c.Auth) == 0 {
-		return fmt.Errorf("auth.tokens or AUTH_TOKENS must be non-empty")
+		return fmt.Errorf("auth.tokens must be non-empty")
 	}
 	for token, identity := range c.Auth {
+		if strings.TrimSpace(identity.ID) == "" {
+			return fmt.Errorf("auth identity id must be non-empty")
+		}
 		if len(token) < 24 || (identity.Role != "staff" && identity.Role != "investor") {
 			return fmt.Errorf("invalid auth identity or token shorter than 24 characters")
 		}
@@ -127,7 +118,7 @@ func (c *Config) ValidateAuth() error {
 func (c *Config) ValidateSMTP() error {
 	if _, _, err := net.SplitHostPort(c.SMTP.Address); err != nil {
 		applog.Error(context.Background(), "config.ValidateSMTP failed", err)
-		return fmt.Errorf("valid SMTP_ADDR required")
+		return fmt.Errorf("valid smtp.address required")
 	}
 	address, err := mail.ParseAddress(c.SMTP.From)
 	if err != nil || address.Address != c.SMTP.From {
@@ -135,7 +126,7 @@ func (c *Config) ValidateSMTP() error {
 			applog.Error(context.Background(), "config.ValidateSMTP failed", err)
 		}
 
-		return fmt.Errorf("valid SMTP_FROM required")
+		return fmt.Errorf("valid smtp.from required")
 	}
 	return nil
 }

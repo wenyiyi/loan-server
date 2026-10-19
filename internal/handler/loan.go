@@ -99,8 +99,8 @@ func (h *LoanHandler) Disburse(ctx *gin.Context) {
 	}
 
 	if !util.ValidURL(req.AgreementURL, ".pdf", ".jpg", ".jpeg") ||
-		req.At <= 0 ||
-		req.At > time.Now().UnixMilli() {
+		req.DisbursedAt <= 0 ||
+		req.DisbursedAt > time.Now().UnixMilli() {
 		v1.HandleError(ctx, v1.ErrRequestParams)
 		return
 	}

@@ -10,11 +10,11 @@ PROPOSED → APPROVED → INVESTED → DISBURSED
 
 ## Getting Started
 
+Edit `config/local.yml`, then start the dependencies and API from the project root:
+
 ```sh
-cp .env.example .env
-# Edit .env and replace the example authentication tokens.
-# Docker Compose reads .env automatically.
-docker compose up --build -d
+docker compose up -d
+go run ./cmd/server
 ```
 
 Local endpoints:
@@ -23,14 +23,18 @@ Local endpoints:
 - Mailpit inbox: http://localhost:8025
 - PostgreSQL: `127.0.0.1:5433`, database `loans`
 
-When the PostgreSQL data volume is first initialized, Compose runs only `migrations/001_init.up.sql`, which creates the complete schema matching the GORM models. Existing volumes do not rerun this script. `001_init.down.sql` drops all six tables and must only be executed manually for an intentional rollback; it is not mounted into PostgreSQL or executed by the API/worker. Apply database changes through migrations; the application does not automatically update the database schema.
+When the PostgreSQL data volume is first initialized, Compose runs only `migrations/001_init.up.sql`, which creates the complete schema matching the GORM models. Existing volumes do not rerun this script. `001_init.down.sql` drops all six tables and must only be executed manually for an intentional rollback; it is not mounted into PostgreSQL or executed by the API/worker. Apply database changes through migrations; the application does not automatically update the database schema. Existing volumes with the legacy `disbursements` table can be upgraded explicitly without deleting data:
+
+```sh
+docker compose exec -T db psql -U loans -d loans -v ON_ERROR_STOP=1 < migrations/002_legacy_disbursements.up.sql
+```
+
+This migration converts `loan_id` to `loan_no` and timestamps to Unix milliseconds, and retains the old table. It is a no-op when the target table already exists.
 
 To run the API locally with PostgreSQL in Docker:
 
 ```sh
 docker compose up -d db
-# Stop the containerized API to free port 8080.
-docker compose stop api
 go run ./cmd/server
 ```
 
@@ -40,22 +44,22 @@ In another terminal, start the notification worker:
 go run ./cmd/worker
 ```
 
-Both entry points automatically load `.env` from the working directory or project root. Existing process environment variables take precedence.
+Both entry points read only `config/local.yml` by default. Run them from the project root. `.env` and environment variables do not override application settings.
 
 ## Configuration and Dependency Injection
 
-Configuration uses Viper, explicit constructors, and dependency injection. Use `-conf` to load a YAML configuration file. `APP_CONF` overrides the command-line configuration path, and environment variables override YAML values.
+Configuration uses a single YAML file, explicit constructors, and dependency injection. Use `-conf config/test.yml` to run against the test configuration. Files are never merged and environment variables never override them.
 
 ```sh
-go run ./cmd/server -conf config/local.yml
-go run ./cmd/worker -conf config/local.yml
+go run ./cmd/server -conf config/test.yml
+go run ./cmd/worker -conf config/test.yml
 ```
 
-An environment-only deployment does not require a YAML file. See [.env.example](.env.example) for the available settings.
+`config/local.yml` contains local settings; `config/test.yml` contains test settings. For a container deployment, mount the selected YAML at `/app/config/local.yml` or pass its path with `-conf`; database and SMTP addresses must be reachable from the container.
 
 `config.NewConfig` loads and validates configuration. `repository.NewDB` creates the database connection. The entry point assembles repositories, the service, handlers, and the HTTP server. Each database table has its own repository; the service coordinates transactions across them.
 
-`pkg/log.NewLog` creates the shared zap logger. `LOG_LEVEL` controls the logging level.
+`pkg/log.NewLog` creates the shared zap logger. `log.level` in the selected YAML controls the logging level.
 
 ## API
 
@@ -75,7 +79,7 @@ Successful business responses use `{code,message,data}`, with business code `0` 
 
 Investment requests require an `Idempotency-Key` header of 1–255 characters. Repeating a key with the same loan number, email, and amount returns the original stored response. Reusing a key with different request content returns HTTP `409` with business code `2003`. Keys are globally unique.
 
-The examples below use tokens from `.env.example`. Replace them with the corresponding staff or investor token from your `.env` if you have changed the configuration.
+The examples below use tokens from `config/local.yml`. Replace them if you change `auth.tokens`. Every identity must have a non-empty `id`.
 
 Create a loan:
 
@@ -166,33 +170,20 @@ go test -race ./...
 
 Database tests use the `integration` build tag and real PostgreSQL connections. Development and database tests share the `loans` database and account. Tests isolate their data in randomly named schemas and remove those schemas when finished.
 
-Prepare the local database:
+Prepare PostgreSQL and verify `database.url` in `config/test.yml`:
 
 ```sh
-# Reuse the existing container and data volume.
 docker compose up -d db
-# Create .env only if it does not already exist.
-cp .env.example .env
-```
-
-The Makefile reads `.env` and exports `DATABASE_URL`. Direct `go test` commands do not automatically load `.env`:
-
-```sh
-set -a
-. ./.env
-set +a
-
-# Service-level investment tests
-go test -tags=integration -race -count=1 ./internal/service
-
-# API integration tests
 make integration
+
+# Run only the migration/model consistency test
+go test -tags=integration ./internal/model -v
 
 # Run only the create-loan API test
 go test -tags=integration ./tests/integration -run '^TestCreateLoan$' -v
 ```
 
-Integration tests require `DATABASE_URL`. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. The model migration test compares PostgreSQL columns, defaults, constraints and indexes against a fresh GORM schema, and verifies explicit rollback and re-initialization. Cleanup does not depend on an outer transaction rolling back repository transactions.
+Integration tests read only `config/test.yml`; they do not use environment variables. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. The model migration test compares PostgreSQL columns, defaults, constraints and indexes against a fresh GORM schema, and verifies explicit rollback and re-initialization. Cleanup does not depend on an outer transaction rolling back repository transactions.
 
 Existing integration fixtures may require updates when model fields or API signatures change. Run the ordinary tests and the relevant database tests after changing these contracts.
 
@@ -212,7 +203,7 @@ When a loan becomes fully funded, notification recipients are deduplicated by in
 
 The worker uses 60-second task leases and a 10-second send timeout. Failed sends are retried with a delay capped at ten minutes. No database transaction remains open during SMTP delivery. Delivery is at least once: a crash after sending but before acknowledging can cause a duplicate email. A stable Message-ID can help recipients deduplicate messages, but does not guarantee deduplication.
 
-Configure SMTP through `SMTP_ADDR`, `SMTP_FROM`, `SMTP_USERNAME`, and `SMTP_PASSWORD`. STARTTLS is required by default; `SMTP_ALLOW_PLAINTEXT=true` supports local Mailpit. Use trusted identities, appropriate database permissions, and TLS for deployed environments.
+Configure SMTP through the `smtp` section in YAML (`address`, `from`, `username`, `password`). STARTTLS is required by default; `allow_plaintext: true` supports local Mailpit. Use trusted identities, appropriate database permissions, and TLS for deployed environments.
 
 See [design.md](docs/design.md) for further design notes. Framework references: [Gin documentation](https://gin-gonic.com/en/docs/) and [GORM transactions](https://gorm.io/docs/transactions.html).
 
@@ -222,13 +213,12 @@ See [design.md](docs/design.md) for further design notes. Framework references: 
 
 Request logs include `request_id` and, when a valid span exists, `trace_id` and `span_id`. The response returns `X-Request-ID` and, when tracing is available, `X-Trace-ID`. A supplied `X-Request-ID` is reused; otherwise, one is generated. Startup and background error logs without a request context use a process correlation ID.
 
-Tracing works locally without an external collector. Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` to enable batched OTLP gRPC export. Use `http://` for a local plaintext collector and `https://` for TLS. `OTEL_SERVICE_NAME` defaults to `amartha-loan-service`. The API flushes and shuts down the TracerProvider on exit.
+Tracing works locally without an external collector. Set `trace.endpoint: "http://localhost:4317"` in YAML to enable batched OTLP gRPC export. Use `http://` for a local plaintext collector and `https://` for TLS. `trace.name` defaults to `amartha-loan-service`. The API flushes and shuts down the TracerProvider on exit.
 
 ## Local Debugging in GoLand
 
 ```sh
 docker compose up -d db
-docker compose stop api
 ```
 
-Open `cmd/server/main.go` in GoLand and click **Debug**. The application loads `.env` automatically, so no manual IDE environment configuration is needed. Existing process environment variables override `.env`. Send requests to `http://localhost:8080`; the debugger's listening port is separate from the API port.
+Open `cmd/server/main.go` in GoLand and click **Debug**. Set the working directory to the project root. The application reads `config/local.yml` by default; use program arguments `-conf config/test.yml` to select the test configuration. Send requests to `http://localhost:8080`; the debugger's listening port is separate from the API port.

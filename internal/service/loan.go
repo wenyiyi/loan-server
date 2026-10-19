@@ -87,10 +87,10 @@ func (s Service) Approve(
 		}
 
 		_, err = tx.approvals.Create(ctx, model.Approval{
-			LoanNo:              loanNo,
-			ValidatorEmployeeID: EmployeeId,
-			VisitProofURL:       req.VisitProofURL,
-			ApprovedAt:          req.ApprovedAt,
+			LoanNo:        loanNo,
+			EmployeeID:    EmployeeId,
+			VisitProofURL: req.VisitProofURL,
+			ApprovedAt:    req.ApprovedAt,
 		})
 		if err != nil {
 			return err
@@ -146,7 +146,7 @@ func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string,
 			LoanNo:             loanNo,
 			OfficerEmployeeID:  EmployeeId,
 			SignedAgreementURL: req.AgreementURL,
-			DisbursedAt:        req.At,
+			DisbursedAt:        req.DisbursedAt,
 		}); err != nil {
 			return err
 		}

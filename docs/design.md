@@ -12,7 +12,7 @@ Outbox 通过 `FOR UPDATE SKIP LOCKED` 原子领取，租约过期可重新领�
 
 数据访问采用 GORM：统一 model 映射现有 PostgreSQL 表并直接用于响应，使用 WithContext 传播取消与超时，Transaction 管理提交/回滚，clause.Locking 保留贷款行锁。批量 Outbox 入队及租约领取保留原子 SQL，并统一通过 GORM 执行。不引入 Redis 或消息队列。静态 Bearer 认证实现便于本地验证，生产需接入身份服务。协议生成/对象存储、实际资金渠道、偿还、币种转换、自动扩缩容与端到端邮件送达确认不在当前范围。
 
-API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewConfig` 通过 Viper 加载 YAML 和环境变量，`repository.NewDB` 管理数据库连接，`internal/server` 组装路由，`internal/middleware` 提供认证、角色授权、请求日志和链路关联。每张表有独立 Repository：Loan、Approval、Disbursement、Investment、LoanStatusHistory 和 NotificationOutbox，各自只访问对应表。Service 编排跨表业务，并把同一个事务连接传给各 Repository。
+API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewConfig` 只加载单个 YAML 文件，默认 config/local.yml，测试使用 config/test.yml，不读取环境变量覆盖，`repository.NewDB` 管理数据库连接，`internal/server` 组装路由，`internal/middleware` 提供认证、角色授权、请求日志和链路关联。每张表有独立 Repository：Loan、Approval、Disbursement、Investment、LoanStatusHistory 和 NotificationOutbox，各自只访问对应表。Service 编排跨表业务，并把同一个事务连接传给各 Repository。
 
 风格参考 marvel-main：使用 New 构造函数，入口显式注入依赖，handler 使用 api/v1 的统一响应，zap 日志通过请求 context 关联 trace_id。贷款和投资 ID 在 Go 与 JSON 边界统一为字符串，PostgreSQL 保持 BIGSERIAL；金额保持 int64。
 
@@ -20,4 +20,4 @@ API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewC
 
 模型集中在 internal/model，不再保留 domain 层及模型转换。Loan 的 remaining_amount 通过 GORM hooks 计算，标记 gorm:"-" 不参与持久化；投资明细直接返回 LoanInvestment，敏感字段由 json:"-" 排除。
 
-集成测试通过 integration 构建标签启用，通过 DATABASE_URL 与应用共用数据库及账号。测试先校验连接实际数据库，再在随机 schema 中执行全部 SQL 迁移，通过真实 HTTP 路由覆盖完整链路。清理由关闭连接后 DROP SCHEMA 完成，不依赖外层事务覆盖 Service 的业务事务。
+集成测试通过 integration 构建标签启用，读取 config/test.yml 中的 database.url，默认与本地应用共用数据库及账号。测试先校验连接实际数据库，再在随机 schema 中执行全部 SQL 迁移，通过真实 HTTP 路由覆盖完整链路。清理由关闭连接后 DROP SCHEMA 完成，不依赖外层事务覆盖 Service 的业务事务。

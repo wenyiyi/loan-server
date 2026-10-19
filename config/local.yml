@@ -1,6 +1,6 @@
-# Environment variables override these local defaults.
+# Local configuration. This file is the only source of application settings.
 database:
-  url: postgres://loans:local-password@localhost:5432/loans?sslmode=disable
+  url: postgres://loans:local-password@localhost:5433/loans?sslmode=disable
 http:
   addr: :8080
 auth:
@@ -11,7 +11,7 @@ auth:
     local-investor-token-change-123456:
       id: INVESTOR001
       role: investor
-      email: investor@example.com
+      email: wenyimei@126.com
 smtp:
   address: localhost:1025
   from: loans@example.com

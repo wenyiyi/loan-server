@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	path := flag.String("conf", "", "configuration YAML path (APP_CONF takes precedence)")
+	path := flag.String("conf", config.DefaultPath, "configuration YAML path")
 	flag.Parse()
 	if err := run(*path); err != nil {
 		applog.Error(context.Background(), "application startup failed", err)
@@ -23,10 +23,6 @@ func main() {
 }
 
 func run(path string) error {
-	if err := config.LoadLocalEnv(); err != nil {
-		applog.Error(context.Background(), "main.run failed", err)
-		return err
-	}
 	conf, err := config.NewConfig(path)
 	if err != nil {
 		applog.Error(context.Background(), "main.run failed", err)

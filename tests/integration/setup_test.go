@@ -32,12 +32,13 @@ import (
 
 func setup(t *testing.T) (service.Service, *gorm.DB) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dsn, "set DATABASE_URL (see .env.example)")
+	conf, err := config.NewConfig("../../config/test.yml")
+	require.NoError(t, err)
+	dsn := conf.DatabaseURL
 	parsed, err := url.Parse(dsn)
 	require.NoError(t, err)
-	require.Contains(t, []string{"postgres", "postgresql"}, parsed.Scheme, "DATABASE_URL must be a PostgreSQL URL")
-	require.NotEmpty(t, strings.TrimPrefix(parsed.Path, "/"), "DATABASE_URL must include a database name")
+	require.Contains(t, []string{"postgres", "postgresql"}, parsed.Scheme, "database.url must be a PostgreSQL URL")
+	require.NotEmpty(t, strings.TrimPrefix(parsed.Path, "/"), "database.url must include a database name")
 
 	admin, err := repository.NewDB(context.Background(), &config.Config{DatabaseURL: dsn})
 	require.NoError(t, err)

@@ -17,28 +17,5 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
     ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
-  api:
-    build: .
-    ports: ["127.0.0.1:8080:8080"]
-    environment:
-      DATABASE_URL: postgres://loans:local-password@db:5432/loans?sslmode=disable
-      AUTH_TOKENS: '${AUTH_TOKENS:?Set AUTH_TOKENS using .env.example}'
-      GIN_MODE: release
-    depends_on:
-      db:
-        condition: service_healthy
-  worker:
-    build: .
-    entrypoint: ["/worker"]
-    environment:
-      DATABASE_URL: postgres://loans:local-password@db:5432/loans?sslmode=disable
-      SMTP_ADDR: mailpit:1025
-      SMTP_FROM: loans@example.com
-      SMTP_ALLOW_PLAINTEXT: "true"
-    depends_on:
-      db:
-        condition: service_healthy
-      mailpit:
-        condition: service_started
 volumes:
   loan-data:
