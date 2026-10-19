@@ -16,7 +16,7 @@ API 与通知消费分别由 `cmd/server` 和 `cmd/worker` 启动。`config.NewC
 
 风格参考 marvel-main：使用 New 构造函数，入口显式注入依赖，handler 使用 api/v1 的统一响应，zap 日志通过请求 context 关联 trace_id。贷款和投资 ID 在 Go 与 JSON 边界统一为字符串，PostgreSQL 保持 BIGSERIAL；金额保持 int64。
 
-数据库结构继续由 SQL migrations 管理，不在启动时调用 AutoMigrate。GORM 的 SQL 日志关闭以避免输出业务参数。请求百分比 rate/roi 转换为现有数据库中的整数基点；model 使用字符串 ID，GORM 显式映射现有 bigint 列。
+数据库结构继续由 SQL migrations 管理，不在启动时调用 AutoMigrate。GORM 的 SQL 日志关闭以避免输出业务参数。rate/roi 使用 numeric(10,6)，自增主键使用 bigint；应用时间字段使用 Unix 毫秒整数。Compose 只挂载 001_init.up.sql；001_init.down.sql 仅用于显式手动回滚，不在正常启动时执行。
 
 模型集中在 internal/model，不再保留 domain 层及模型转换。Loan 的 remaining_amount 通过 GORM hooks 计算，标记 gorm:"-" 不参与持久化；投资明细直接返回 LoanInvestment，敏感字段由 json:"-" 排除。
 

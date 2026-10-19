@@ -23,7 +23,7 @@ func (s Service) Invest(
 		}
 
 		// Return the original result for duplicate requests
-		investment, err := tx.checkIdempotency(ctx, loanNo, req)
+		investment, err := tx.checkIdempotency(ctx, loanNo, InvestorID, req)
 		if err != nil {
 			return err
 		}
@@ -62,6 +62,7 @@ func (s Service) Invest(
 func (s Service) checkIdempotency(
 	ctx context.Context,
 	loanNo string,
+	investorID string,
 	req v1.InvestmentRequest,
 ) (*v1.InvestmentResult, error) {
 	investment, err := s.investments.GetByKey(ctx, req.Key)
@@ -74,6 +75,7 @@ func (s Service) checkIdempotency(
 	}
 
 	if investment.LoanNo != loanNo ||
+		investment.InvestorID != investorID ||
 		investment.Email != req.Email ||
 		investment.Amount != req.Amount {
 		return nil, v1.ErrIdempotency

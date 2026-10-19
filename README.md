@@ -23,7 +23,7 @@ Local endpoints:
 - Mailpit inbox: http://localhost:8025
 - PostgreSQL: `127.0.0.1:5433`, database `loans`
 
-When the PostgreSQL data volume is first initialized, Compose runs the mounted SQL migrations in order: `001_init.up.sql`, `002_loan_rate_columns.up.sql`, and `003_decimal_rates.up.sql`. Existing volumes do not rerun these scripts. Apply database changes through migrations; the application does not automatically update the database schema.
+When the PostgreSQL data volume is first initialized, Compose runs only `migrations/001_init.up.sql`, which creates the complete schema matching the GORM models. Existing volumes do not rerun this script. `001_init.down.sql` drops all six tables and must only be executed manually for an intentional rollback; it is not mounted into PostgreSQL or executed by the API/worker. Apply database changes through migrations; the application does not automatically update the database schema.
 
 To run the API locally with PostgreSQL in Docker:
 
@@ -192,7 +192,7 @@ make integration
 go test -tags=integration ./tests/integration -run '^TestCreateLoan$' -v
 ```
 
-Integration tests require `DATABASE_URL`. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. Service investment fixtures create isolated tables for their model contracts. Cleanup does not depend on an outer transaction rolling back repository transactions.
+Integration tests require `DATABASE_URL`. The API integration fixtures apply all `*.up.sql` migrations to their test schemas. The model migration test compares PostgreSQL columns, defaults, constraints and indexes against a fresh GORM schema, and verifies explicit rollback and re-initialization. Cleanup does not depend on an outer transaction rolling back repository transactions.
 
 Existing integration fixtures may require updates when model fields or API signatures change. Run the ordinary tests and the relevant database tests after changing these contracts.
 

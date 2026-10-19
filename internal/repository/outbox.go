@@ -30,8 +30,8 @@ func (r *notificationOutboxRepository) Create(ctx context.Context, values []mode
 func (r *notificationOutboxRepository) Claim(ctx context.Context, lease string) (*model.NotificationOutbox, error) {
 	var task model.NotificationOutbox
 	result := r.DB(ctx).Raw(`UPDATE notification_outbox
- SET available_at=now()+interval '60 seconds', attempts=attempts+1, lease_token=?
- WHERE id=(SELECT id FROM notification_outbox WHERE delivered_at IS NULL AND available_at<=now()
+ SET available_at=(extract(epoch from now())*1000)::bigint+60000, attempts=attempts+1, lease_token=?
+ WHERE id=(SELECT id FROM notification_outbox WHERE delivered_at IS NULL AND available_at<=(extract(epoch from now())*1000)::bigint
  ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,email,agreement_url`, lease).Scan(&task)
 	if result.Error != nil {
 		applog.Error(ctx, "outbox.Claim failed", result.Error)
@@ -44,9 +44,9 @@ func (r *notificationOutboxRepository) Claim(ctx context.Context, lease string) 
 }
 
 func (r *notificationOutboxRepository) Retry(ctx context.Context, id int64, lease string) error {
-	return r.DB(ctx).Exec(`UPDATE notification_outbox SET available_at=now()+LEAST(attempts,60)*interval '10 seconds',lease_token=NULL WHERE id=? AND lease_token=?`, id, lease).Error
+	return r.DB(ctx).Exec(`UPDATE notification_outbox SET available_at=(extract(epoch from now())*1000)::bigint+LEAST(attempts,60)*10000,lease_token=NULL WHERE id=? AND lease_token=?`, id, lease).Error
 }
 
 func (r *notificationOutboxRepository) Complete(ctx context.Context, id int64, lease string) error {
-	return r.DB(ctx).Exec("UPDATE notification_outbox SET delivered_at=now(),lease_token=NULL WHERE id=? AND lease_token=?", id, lease).Error
+	return r.DB(ctx).Exec("UPDATE notification_outbox SET delivered_at=(extract(epoch from now())*1000)::bigint,lease_token=NULL WHERE id=? AND lease_token=?", id, lease).Error
 }

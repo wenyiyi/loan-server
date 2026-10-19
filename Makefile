@@ -8,7 +8,7 @@ test:
 	go test -race ./...
 integration:
 	test -n "$$DATABASE_URL"
-	go test -tags=integration -race -count=1 ./tests/integration -v
+	go test -tags=integration -race -count=1 ./internal/model ./tests/integration -v
 vet:
 	go vet ./...
 build:
