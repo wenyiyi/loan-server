@@ -47,7 +47,7 @@ func (s Service) Create(ctx context.Context, req v1.LoanCreateRequest) (*v1.Loan
 // Approve approves a proposed loan.
 func (s Service) Approve(ctx context.Context, loanNo string, EmployeeId string, req v1.ApprovalRequest) error {
 	return s.transaction(ctx, func(tx Service) error {
-		// Atomic status transition.
+		// add lock
 		err := tx.loans.UpdateStatusWithConditions(ctx, loanNo, model.Proposed, model.Approved)
 		if err != nil {
 			log.WithContext(ctx, s.logger).Error("update loan approval status failed", zap.String("loan_no", loanNo), zap.Error(err))
@@ -64,6 +64,7 @@ func (s Service) Approve(ctx context.Context, loanNo string, EmployeeId string, 
 			log.WithContext(ctx, s.logger).Error("create loan approval failed", zap.String("loan_no", loanNo), zap.Error(err))
 			return err
 		}
+		// submit tx, release lock
 		return tx.recordHistory(ctx, loanNo, model.Proposed, model.Approved, model.ActionApprove)
 	})
 }
@@ -85,8 +86,9 @@ func (s Service) recordHistory(ctx context.Context, loanNo string, from, to mode
 }
 
 // Disburse disburses a fully funded loan.
-func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string, req v1.DisbursementRequest) error {
+func (s Service) Disburse(ctx context.Context, loanNo string, employeeID string, req v1.DisbursementRequest) error {
 	return s.transaction(ctx, func(tx Service) error {
+		// add lock
 		loan, err := tx.loans.GetForUpdate(ctx, loanNo)
 		if err != nil {
 			log.WithContext(ctx, s.logger).Error("lock loan for disbursement failed", zap.String("loan_no", loanNo), zap.Error(err))
@@ -99,7 +101,7 @@ func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string,
 
 		_, err = tx.disbursements.Create(ctx, model.Disbursement{
 			LoanNo:             loanNo,
-			OfficerEmployeeID:  EmployeeId,
+			EmployeeID:         employeeID,
 			SignedAgreementURL: req.AgreementURL,
 			DisbursedAt:        time.Now().UnixMilli(),
 		})
@@ -116,6 +118,17 @@ func (s Service) Disburse(ctx context.Context, loanNo string, EmployeeId string,
 			return err
 		}
 
+		// submit tx, release lock
 		return tx.recordHistory(ctx, loanNo, model.Invested, model.Disbursed, model.ActionDisburse)
 	})
+}
+
+// Get returns a loan with its current remaining amount.
+func (s Service) Get(ctx context.Context, loanNo string) (model.Loan, error) {
+	loan, err := s.loans.GetByLoanNo(ctx, loanNo)
+	if err != nil {
+		return model.Loan{}, err
+	}
+	loan.Remaining = loan.PrincipalAmount - loan.InvestedAmount
+	return loan, nil
 }

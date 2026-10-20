@@ -21,7 +21,7 @@ func (s Service) Invest(
 	var result *v1.InvestmentResult
 
 	err := s.transaction(ctx, func(tx Service) error {
-		// Lock the loan to prevent concurrent over-investment
+		// add lock
 		loan, err := tx.loans.GetForUpdate(ctx, loanNo)
 		if err != nil {
 			log.WithContext(ctx, s.logger).Error("lock loan for investment failed", zap.String("loan_no", loanNo), zap.Error(err))
@@ -55,6 +55,7 @@ func (s Service) Invest(
 
 		// Record the state change and queue agreement notifications.
 		if result.Status == model.Invested {
+			// submit tx, release lock
 			return tx.handleFullyFunded(ctx, loan)
 		}
 
@@ -149,11 +150,7 @@ func (s Service) handleFullyFunded(ctx context.Context, loan model.Loan) error {
 	}
 	investments, err := s.investments.ListByLoanNo(ctx, loan.LoanNo)
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"list funded loan investments failed",
-			zap.String("loan_no", loan.LoanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("list funded loan investments failed", zap.String("loan_no", loan.LoanNo), zap.Error(err))
 		return err
 	}
 	recipients := make(map[string]model.Investment)

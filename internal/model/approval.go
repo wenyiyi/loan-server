@@ -2,7 +2,7 @@ package model
 
 type Approval struct {
 	ID            int64  `gorm:"primaryKey;autoIncrement" json:"id"`
-	LoanNo        string `gorm:"column:loan_no;size:22;not null;index" json:"loan_no"`
+	LoanNo        string `gorm:"column:loan_no;size:22;not null;uniqueIndex" json:"loan_no"`
 	EmployeeID    string `gorm:"not null" json:"employee_id"`
 	VisitProofURL string `gorm:"not null" json:"visit_proof_url"`
 	ApprovedAt    int64  `gorm:"not null" json:"approved_at"`

@@ -13,12 +13,12 @@ import (
 )
 
 type Worker struct {
-	DB     *gorm.DB
+	outbox repository.NotificationOutboxRepository
 	Sender Sender
 }
 
 func NewWorker(db *gorm.DB, sender Sender) *Worker {
-	return &Worker{DB: db, Sender: sender}
+	return &Worker{outbox: repository.NewNotificationOutboxRepository(repository.NewRepository(db)), Sender: sender}
 }
 
 // Run polls the outbox every second and processes one task at a time.
@@ -48,12 +48,8 @@ func (w Worker) Once(ctx context.Context) error {
 	}
 	lease := hex.EncodeToString(b)
 
-	outbox := repository.NewNotificationOutboxRepository(
-		repository.NewRepository(w.DB),
-	)
-
 	// Atomically claim an available task.
-	task, err := outbox.Claim(ctx, lease)
+	task, err := w.outbox.Claim(ctx, lease)
 	if err != nil {
 		return err
 	}
@@ -83,7 +79,7 @@ func (w Worker) Once(ctx context.Context) error {
 
 	if err != nil {
 		// Release the lease and schedule a retry.
-		if retryErr := outbox.Retry(ackCtx, task.ID, lease); retryErr != nil {
+		if retryErr := w.outbox.Retry(ackCtx, task.ID, lease); retryErr != nil {
 			return fmt.Errorf(
 				"send failed: %v; retry update failed: %w",
 				err, retryErr,
@@ -93,5 +89,5 @@ func (w Worker) Once(ctx context.Context) error {
 	}
 
 	// Mark the task as delivered.
-	return outbox.Complete(ackCtx, task.ID, lease)
+	return w.outbox.Complete(ackCtx, task.ID, lease)
 }

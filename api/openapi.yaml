@@ -1,724 +1,548 @@
----
-openapi: 3.0.3
-info:
-  title: Loan Service
-  version: 1.0.0
-servers:
-- url: http://localhost:8080
-security:
-- bearerAuth: []
-paths:
-  "/api/v1/loans":
-    post:
-      operationId: CreateLoan
-      description: Create a loan in PROPOSED state. Integer amounts use a single currency
-        minor unit.
-      tags:
-      - staff
-      responses:
-        '201':
-          description: Success
-          headers:
-            X-Request-ID:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/LoanResponse"
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '409':
-          description: State, amount or idempotency conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '415':
-          description: Content-Type must be application/json
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/CreateLoan"
-  "/api/v1/loans/{id}":
-    get:
-      operationId: GetLoan
-      description: Get loan details. Restricted to staff to protect borrower information.
-      tags:
-      - staff
-      responses:
-        '200':
-          description: Success
-          headers:
-            X-Request-ID:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/LoanResponse"
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '409':
-          description: State, amount or idempotency conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '415':
-          description: Content-Type must be application/json
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-  "/api/v1/loans/{id}/approval":
-    post:
-      operationId: Approval
-      description: Approve a PROPOSED loan. Employee ID must match authenticated identity.
-      tags:
-      - staff
-      responses:
-        '200':
-          description: Success
-          headers:
-            X-Request-ID:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/StatusResultResponse"
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '409':
-          description: State, amount or idempotency conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '415':
-          description: Content-Type must be application/json
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/Approval"
-  "/api/v1/loans/{id}/investments":
-    get:
-      operationId: ListInvestments
-      description: List investments in ID order. Staff only. Returns an empty array for a loan without investments.
-      tags: [staff]
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-      responses:
-        '200':
-          description: Investment list
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/InvestmentListResponse"
-        '400':
-          description: Invalid loan ID
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Staff required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-    post:
-      operationId: Investment
-      description: Invest in an APPROVED loan. Fully funding changes state to INVESTED
-        and enqueues emails. Investor ID must match authenticated identity; email
-        comes from auth. Same key and payload replay the original response; conflicts
-        return 409. Keys are globally unique.
-      tags:
-      - investor
-      responses:
-        '201':
-          description: Success
-          headers:
-            X-Request-ID:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/InvestmentResultResponse"
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '409':
-          description: State, amount or idempotency conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '415':
-          description: Content-Type must be application/json
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-      - name: Idempotency-Key
-        in: header
-        required: true
-        schema:
-          type: string
-          minLength: 1
-          maxLength: 128
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/Investment"
-  "/api/v1/loans/{id}/disbursement":
-    post:
-      operationId: Disbursement
-      description: Disburse an INVESTED loan. Employee ID must match authenticated
-        identity.
-      tags:
-      - staff
-      responses:
-        '200':
-          description: Success
-          headers:
-            X-Request-ID:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/StatusResultResponse"
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '404':
-          description: Loan not found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '409':
-          description: State, amount or idempotency conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '415':
-          description: Content-Type must be application/json
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/Disbursement"
-  "/healthz":
-    get:
-      operationId: healthz
-      security: []
-      responses:
-        '200':
-          description: Healthy
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Health"
-  "/readyz":
-    get:
-      operationId: readyz
-      security: []
-      responses:
-        '200':
-          description: Healthy
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Health"
-        '503':
-          description: Database unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-  schemas:
-    CreateLoan:
-      type: object
-      additionalProperties: false
-      properties:
-        borrower_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        principal_amount:
-          type: integer
-          format: int64
-          minimum: 1
-        rate:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 100
-        roi:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 100
-          description: Must not exceed rate
-        agreement_url:
-          type: string
-          format: uri
-          description: 'HTTPS URL; allowed suffix: .pdf'
-          maxLength: 2048
-      required:
-      - borrower_id
-      - principal_amount
-      - rate
-      - roi
-      - agreement_url
-    Loan:
-      type: object
-      additionalProperties: false
-      properties:
-        id:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-        borrower_id:
-          type: string
-        principal_amount:
-          type: integer
-          format: int64
-        invested_amount:
-          type: integer
-          format: int64
-        remaining_amount:
-          type: integer
-          format: int64
-        interest_rate_bps:
-          type: integer
-        roi_bps:
-          type: integer
-        agreement_url:
-          type: string
-          format: uri
-          description: 'HTTPS URL; allowed suffix: .pdf'
-          maxLength: 2048
-        status:
-          type: string
-          enum:
-          - PROPOSED
-          - APPROVED
-          - INVESTED
-          - DISBURSED
-        created_at:
-          type: string
-          format: date-time
-      required:
-      - id
-      - borrower_id
-      - principal_amount
-      - invested_amount
-      - remaining_amount
-      - interest_rate_bps
-      - roi_bps
-      - agreement_url
-      - status
-      - created_at
-    Approval:
-      type: object
-      additionalProperties: false
-      properties:
-        validator_employee_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        visit_proof_url:
-          type: string
-          format: uri
-          description: 'HTTPS URL; allowed suffix: .jpg, .jpeg, .png'
-          maxLength: 2048
-        approved_at:
-          type: string
-          format: date-time
-          description: Not before loan creation; no more than one minute in the future
-      required:
-      - validator_employee_id
-      - visit_proof_url
-      - approved_at
-    Disbursement:
-      type: object
-      additionalProperties: false
-      properties:
-        officer_employee_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        signed_agreement_url:
-          type: string
-          format: uri
-          description: 'HTTPS URL; allowed suffix: .pdf, .jpg, .jpeg'
-          maxLength: 2048
-        disbursed_at:
-          type: string
-          format: date-time
-          description: Not before approval or latest investment; no more than one
-            minute in the future
-      required:
-      - officer_employee_id
-      - signed_agreement_url
-      - disbursed_at
-    Investment:
-      type: object
-      additionalProperties: false
-      properties:
-        investor_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        amount:
-          type: integer
-          format: int64
-          minimum: 1
-      required:
-      - investor_id
-      - amount
-    InvestmentResult:
-      type: object
-      additionalProperties: false
-      properties:
-        investment_id:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-        loan_id:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-        total_invested:
-          type: integer
-          format: int64
-        remaining_amount:
-          type: integer
-          format: int64
-        status:
-          type: string
-          enum:
-          - PROPOSED
-          - APPROVED
-          - INVESTED
-          - DISBURSED
-      required:
-      - investment_id
-      - loan_id
-      - total_invested
-      - remaining_amount
-      - status
-    StatusResult:
-      type: object
-      additionalProperties: false
-      properties:
-        loan_id:
-          type: string
-          pattern: "^[1-9][0-9]*$"
-        status:
-          type: string
-          enum:
-          - PROPOSED
-          - APPROVED
-          - INVESTED
-          - DISBURSED
-      required:
-      - loan_id
-      - status
-    Error:
-      type: object
-      additionalProperties: false
-      properties:
-        code:
-          type: integer
-          description: Business error code, independent of HTTP status.
-          enum: [1000, 1001, 1002, 1003, 1004, 2001, 2002, 2003, 2004, 2005, 5000, 5001]
-        message:
-          type: string
-      required: [code, message]
-    Health:
-      type: object
-      additionalProperties: false
-      properties:
-        status:
-          type: string
-      required:
-      - status
-    LoanResponse:
-      type: object
-      additionalProperties: false
-      properties:
-        code:
-          type: integer
-          enum: [0]
-        message:
-          type: string
-        data:
-          "$ref": "#/components/schemas/Loan"
-      required: [code, message, data]
-    StatusResultResponse:
-      type: object
-      additionalProperties: false
-      properties:
-        code:
-          type: integer
-          enum: [0]
-        message:
-          type: string
-        data:
-          "$ref": "#/components/schemas/StatusResult"
-      required: [code, message, data]
-    InvestmentResultResponse:
-      type: object
-      additionalProperties: false
-      properties:
-        code:
-          type: integer
-          enum: [0]
-        message:
-          type: string
-        data:
-          "$ref": "#/components/schemas/InvestmentResult"
-      required: [code, message, data]
-    InvestmentListResponse:
-      type: object
-      additionalProperties: false
-      properties:
-        code:
-          type: integer
-          enum: [0]
-        message:
-          type: string
-        data:
-          "$ref": "#/components/schemas/InvestmentList"
-      required: [code, message, data]
-    InvestmentRecord:
-      type: object
-      properties:
-        investment_id:
-          type: string
-        loan_id:
-          type: string
-        investor_id:
-          type: string
-        amount:
-          type: integer
-          format: int64
-        created_at:
-          type: string
-          format: date-time
-      required: [investment_id, loan_id, investor_id, amount, created_at]
-    InvestmentList:
-      type: array
-      items:
-        "$ref": "#/components/schemas/InvestmentRecord"
+    schemas:
+        ActionResponse:
+            properties:
+                code:
+                    enum:
+                        - 0
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/EmptyResult'
+                message:
+                    type: string
+            required:
+                - code
+                - message
+                - data
+            type: object
+        Approval:
+            properties:
+                visit_proof_url:
+                    description: 'Allowed suffixes: .jpg, .jpeg, .png. HTTPS only. Path suffix only; remote content is not checked.'
+                    format: uri
+                    type: string
+            required:
+                - visit_proof_url
+            type: object
+        CreateLoan:
+            properties:
+                agreement_url:
+                    description: 'Allowed suffix: .pdf. HTTPS only. Path suffix only; remote content is not checked.'
+                    format: uri
+                    type: string
+                borrower_id:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                principal_amount:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                rate:
+                    description: Decimal percent from 0 to 100.
+                    oneOf:
+                        - type: number
+                        - type: string
+                roi:
+                    description: Decimal percent from 0 to rate.
+                    oneOf:
+                        - type: number
+                        - type: string
+            required:
+                - borrower_id
+                - principal_amount
+                - rate
+                - roi
+                - agreement_url
+            type: object
+        CreateLoanResponse:
+            properties:
+                code:
+                    enum:
+                        - 0
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/CreateLoanResult'
+                message:
+                    type: string
+            required:
+                - code
+                - message
+                - data
+            type: object
+        CreateLoanResult:
+            properties:
+                loan_no:
+                    type: string
+            required:
+                - loan_no
+            type: object
+        Disbursement:
+            properties:
+                signed_agreement_url:
+                    description: 'Allowed suffixes: .pdf, .jpg, .jpeg. HTTPS only. Path suffix only; remote content is not checked.'
+                    format: uri
+                    type: string
+            required:
+                - signed_agreement_url
+            type: object
+        EmptyResult:
+            maxProperties: 0
+            type: object
+        Error:
+            properties:
+                code:
+                    type: integer
+                message:
+                    type: string
+            required:
+                - code
+                - message
+            type: object
+        Health:
+            properties:
+                status:
+                    type: string
+            required:
+                - status
+            type: object
+        Investment:
+            properties:
+                amount:
+                    format: int64
+                    minimum: 1
+                    type: integer
+            required:
+                - amount
+            type: object
+        InvestmentResponse:
+            properties:
+                code:
+                    enum:
+                        - 0
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/InvestmentResult'
+                message:
+                    type: string
+            required:
+                - code
+                - message
+                - data
+            type: object
+        InvestmentResult:
+            properties:
+                id:
+                    format: int64
+                    type: integer
+                invested_amount:
+                    format: int64
+                    type: integer
+                loan_no:
+                    type: string
+                remaining_amount:
+                    format: int64
+                    type: integer
+                status:
+                    enum:
+                        - PROPOSED
+                        - APPROVED
+                        - INVESTED
+                        - DISBURSED
+                    type: string
+            required:
+                - id
+                - loan_no
+                - invested_amount
+                - remaining_amount
+                - status
+            type: object
+        Loan:
+            properties:
+                agreement_url:
+                    description: 'Allowed suffix: .pdf. HTTPS only. Path suffix only; remote content is not checked.'
+                    format: uri
+                    type: string
+                borrower_id:
+                    type: string
+                created_at:
+                    description: Server time in Unix milliseconds.
+                    format: int64
+                    type: integer
+                invested_amount:
+                    format: int64
+                    type: integer
+                loan_no:
+                    type: string
+                principal_amount:
+                    format: int64
+                    type: integer
+                rate:
+                    description: Decimal percent, for example "10".
+                    type: string
+                remaining_amount:
+                    format: int64
+                    type: integer
+                roi:
+                    description: Decimal percent, for example "8".
+                    type: string
+                status:
+                    enum:
+                        - PROPOSED
+                        - APPROVED
+                        - INVESTED
+                        - DISBURSED
+                    type: string
+                updated_at:
+                    description: Server time in Unix milliseconds.
+                    format: int64
+                    type: integer
+            required:
+                - loan_no
+                - borrower_id
+                - principal_amount
+                - invested_amount
+                - remaining_amount
+                - rate
+                - roi
+                - agreement_url
+                - status
+                - created_at
+                - updated_at
+            type: object
+        LoanResponse:
+            properties:
+                code:
+                    enum:
+                        - 0
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/Loan'
+                message:
+                    type: string
+            required:
+                - code
+                - message
+                - data
+            type: object
+    securitySchemes:
+        bearerAuth:
+            scheme: bearer
+            type: http
+info:
+    description: Loan state and investment API. Amounts are integer minor units. Business timestamps are Unix milliseconds. Unknown JSON fields are ignored. No file downloads or real money transfers.
+    title: Amartha Loan Service
+    version: 1.0.0
+openapi: 3.0.3
+paths:
+    /api/v1/loans:
+        post:
+            description: Create a PROPOSED loan. Staff identity comes from auth.
+            operationId: CreateLoan
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateLoan'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateLoanResponse'
+                    description: Success.
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Invalid input or document URL.
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Missing or invalid Bearer token.
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Role is not allowed.
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Internal server error.
+            tags:
+                - staff
+    /api/v1/loans/{loan_no}:
+        get:
+            description: Read a loan and its current remaining amount. Staff only.
+            operationId: GetLoan
+            parameters:
+                - description: Business loan number returned by create.
+                  example: AbCdEfGhIjKlMnOpQrStUv
+                  in: path
+                  name: loan_no
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LoanResponse'
+                    description: Success.
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Missing or invalid Bearer token.
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Role is not allowed.
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Loan not found.
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Internal server error.
+            tags:
+                - staff
+    /api/v1/loans/{loan_no}/approval:
+        post:
+            description: Approve a PROPOSED loan. Staff ID and approval time are set by the server. Returns an empty data object.
+            operationId: ApproveLoan
+            parameters:
+                - description: Business loan number returned by create.
+                  example: AbCdEfGhIjKlMnOpQrStUv
+                  in: path
+                  name: loan_no
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Approval'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ActionResponse'
+                    description: Success.
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Invalid input or document URL.
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Missing or invalid Bearer token.
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Role is not allowed.
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: State, amount, or idempotency conflict.
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Internal server error.
+            tags:
+                - staff
+    /api/v1/loans/{loan_no}/disbursement:
+        post:
+            description: Disburse an INVESTED loan. Staff ID and disbursement time are set by the server. Returns an empty data object.
+            operationId: DisburseLoan
+            parameters:
+                - description: Business loan number returned by create.
+                  example: AbCdEfGhIjKlMnOpQrStUv
+                  in: path
+                  name: loan_no
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Disbursement'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ActionResponse'
+                    description: Success.
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Invalid input or document URL.
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Missing or invalid Bearer token.
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Role is not allowed.
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Loan not found.
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: State, amount, or idempotency conflict.
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Internal server error.
+            tags:
+                - staff
+    /api/v1/loans/{loan_no}/investments:
+        post:
+            description: Invest in an APPROVED loan. Investor ID and email come from auth. Full funding sets INVESTED and queues email tasks. Exact retries return the original response with HTTP 200, even after the state changes. Changed data with the same key returns 409.
+            operationId: Invest
+            parameters:
+                - description: Business loan number returned by create.
+                  example: AbCdEfGhIjKlMnOpQrStUv
+                  in: path
+                  name: loan_no
+                  required: true
+                  schema:
+                    type: string
+                - description: Global key, 1 to 255 bytes. Use the same key only for the same loan, investor, email, and amount.
+                  in: header
+                  name: Idempotency-Key
+                  required: true
+                  schema:
+                    maxLength: 255
+                    minLength: 1
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Investment'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InvestmentResponse'
+                    description: Success.
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Invalid input or document URL.
+                "401":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Missing or invalid Bearer token.
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Role is not allowed.
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Loan not found.
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: State, amount, or idempotency conflict.
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Internal server error.
+            tags:
+                - investor
+    /healthz:
+        get:
+            operationId: healthz
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Health'
+                    description: 'Status: ok'
+            security: []
+    /readyz:
+        get:
+            operationId: readyz
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Health'
+                    description: 'Status: ready'
+                "503":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                    description: Database unavailable.
+            security: []
+security:
+    - bearerAuth: []
+servers:
+    - url: http://localhost:8080

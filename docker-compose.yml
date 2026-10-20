@@ -9,6 +9,7 @@ services:
     volumes:
       - loan-data:/var/lib/postgresql/data
       - ./migrations/001_init.up.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./migrations/002_data_constraints.up.sql:/docker-entrypoint-initdb.d/002_data_constraints.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U loans -d loans"]
       interval: 2s

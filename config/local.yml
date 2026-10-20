@@ -1,4 +1,5 @@
-# Local configuration. This file is the only source of application settings.
+# Local demo settings only. Tokens and passwords here are public examples.
+# Use separate credentials for deployed environments.
 database:
   url: postgres://loans:local-password@localhost:5433/loans?sslmode=disable
 http:
@@ -11,7 +12,7 @@ auth:
     local-investor-token-change-123456:
       id: INVESTOR001
       role: investor
-      email: wenyimei@126.com
+      email: investor@example.com
 smtp:
   address: localhost:1025
   from: loans@example.com

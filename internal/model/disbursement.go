@@ -3,7 +3,7 @@ package model
 type Disbursement struct {
 	ID                 int64  `gorm:"primaryKey;autoIncrement" json:"id"`
 	LoanNo             string `gorm:"column:loan_no;size:22;not null;uniqueIndex" json:"loan_no"`
-	OfficerEmployeeID  string `gorm:"not null" json:"officer_employee_id"`
+	EmployeeID         string `gorm:"not null" json:"employee_id"`
 	SignedAgreementURL string `gorm:"not null" json:"signed_agreement_url"`
 	DisbursedAt        int64  `gorm:"not null" json:"disbursed_at"`
 

@@ -75,14 +75,28 @@ func findLoan(db *gorm.DB, loanNo string) (model.Loan, error) {
 func (r *loanRepository) UpdateInvestedAmount(
 	ctx context.Context,
 	loanNo string,
-	total int64,
+	totalInvestedAmount int64,
 	newStatus model.Status,
 ) error {
 	result := r.DB(ctx).
 		Model(&model.Loan{}).
-		Where("loan_no = ? AND status = ?", loanNo, model.Approved).
+		Where(
+			`loan_no = ?
+			 AND status = ?
+			 AND ? BETWEEN 0 AND principal_amount
+			 AND (
+				 (? = principal_amount AND ? = ?)
+				 OR
+				 (? < principal_amount AND ? = ?)
+			 )`,
+			loanNo,
+			model.Approved,
+			totalInvestedAmount,
+			totalInvestedAmount, newStatus, model.Invested,
+			totalInvestedAmount, newStatus, model.Approved,
+		).
 		Updates(map[string]any{
-			"invested_amount": total,
+			"invested_amount": totalInvestedAmount,
 			"status":          newStatus,
 		})
 

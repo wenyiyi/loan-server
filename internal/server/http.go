@@ -69,6 +69,7 @@ func NewHTTPServer(
 	{
 		// Staff only
 		loans.POST("", middleware.RequireStaff(), loanHandler.Create)
+		loans.GET("/:loan_no", middleware.RequireStaff(), loanHandler.Get)
 		loans.POST("/:loan_no/approval", middleware.RequireStaff(), loanHandler.Approve)
 		loans.POST("/:loan_no/disbursement", middleware.RequireStaff(), loanHandler.Disburse)
 

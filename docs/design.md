@@ -57,6 +57,7 @@ stateDiagram-v2
 
 | Action | Required state | Result |
 | --- | --- | --- |
+| Read | Any state; staff only | Return loan details and current remaining amount |
 | Create | No loan yet | Create a `PROPOSED` loan |
 | Approve | `PROPOSED` | Set `APPROVED` |
 | Invest | `APPROVED` | Keep `APPROVED` until the loan is full, then set `INVESTED` |
@@ -123,7 +124,7 @@ The worker uses this flow:
 
 The retry delay is `min(attempts, 60) * 10` seconds. An expired lease allows another worker to claim the task. Complete and retry updates must match the current token, so an old worker cannot change a newer lease.
 
-The current SQL uses `available_at` for both retry time and lease expiry. The model also has `lease_until`, but the worker does not use it.
+The current SQL uses `available_at` for both retry time and lease expiry. The unused `LeaseUntil` model field has been removed. The old nullable database column is kept for compatibility. The worker creates its repository once at startup.
 
 Email delivery is **at least once**. A crash after sending but before saving success can cause another email. A stable Message-ID helps identify duplicates, but does not guarantee one delivery.
 
@@ -144,12 +145,12 @@ Data types and rules:
 - Internal row IDs use PostgreSQL `BIGSERIAL` and Go `int64`.
 - Amounts use `int64`. Rate and ROI use `numeric(10,6)` and Go decimals.
 - App timestamps use Unix milliseconds.
-- `remaining_amount` is not stored. It is principal minus invested amount. The current loan model does not have a hook that fills this field after a read.
+- `remaining_amount` is not stored. It is principal minus invested amount. The query service fills this field before returning loan details.
 - Handlers return small response types for loan creation and investment. Hidden model fields use `json:"-"`.
 
-Unique indexes protect loan numbers, investment keys, one disbursement per loan, and one Outbox task per loan/investor/type. Other business checks, such as valid states and investment limits, run in the handler or service. The current migration does not add foreign keys or CHECK constraints for these rules. Direct table writes can bypass them.
+Unique indexes protect loan numbers, investment keys, one disbursement per loan, and one Outbox task per loan/investor/type. Migration 002 adds CHECK constraints for positive principal, valid invested amounts, rates, ROI, valid loan states, and positive investment amounts. It also makes approval loan numbers unique. There are no foreign keys. Direct writes can still bypass the service transaction that keeps totals across tables in sync.
 
-SQL files in `migrations` manage the schema. The app does not call `AutoMigrate` at startup. Compose runs only `001_init.up.sql` when it first creates the database volume. An existing volume needs an explicit migration step. `001_init.down.sql` drops tables and is for an intentional manual rollback only.
+SQL files in `migrations` manage the schema. The app does not call `AutoMigrate` at startup. Compose runs `001_init.up.sql` and `002_data_constraints.up.sql` in order when it first creates the database volume. An existing volume needs an explicit migration step. `001_init.down.sql` drops tables and is for an intentional manual rollback only.
 
 ## 8. Auth and logs
 
@@ -157,14 +158,14 @@ Business routes require a Bearer token. The current auth code maps configured to
 
 | Role | Allowed actions |
 | --- | --- |
-| Staff | Create, approve, and disburse loans |
+| Staff | Read, create, approve, and disburse loans |
 | Investor | Invest in loans |
 
 Staff IDs, investor IDs, and investor emails come from auth. The service does not trust these values from request JSON.
 
 Handlers use the shared response format in `api/v1`. Public errors have HTTP status codes and business codes. Internal errors return a general message without database details.
 
-Zap logs use request context for request and trace data. GORM SQL logs are off to avoid logging business values. `/healthz` checks the HTTP process; `/readyz` checks the database connection.
+Zap logs use request context for request and trace data. Investment errors are returned by the service and logged at the HTTP boundary, rather than at every service step. GORM SQL logs are off to avoid logging business values. `/healthz` checks the HTTP process; `/readyz` checks the database connection.
 
 ## 9. Startup and config
 
@@ -202,6 +203,8 @@ go test -tags=integration -v ./tests/integration -run '^TestApproveRecordFailure
 ```
 
 GoLand needs `integration` in its custom build tags to show integration test files as active. Saved run configs in `.run` include the tag and verbose output.
+
+Document links require HTTPS and a valid suffix: PDF for the initial agreement, JPG/JPEG/PNG for visit proof, and PDF/JPG/JPEG for a signed agreement. These checks do not verify remote content.
 
 ## 11. Limits
 

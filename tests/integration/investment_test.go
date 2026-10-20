@@ -12,6 +12,7 @@ import (
 	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
 	"LoanService/internal/service"
+
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -260,7 +261,7 @@ func TestTransitionsConcurrentAndTimestamps(t *testing.T) {
 				var d model.Disbursement
 				require.NoError(t, db.Take(&d).Error)
 				timestamp = d.DisbursedAt
-				require.Equal(t, "staff", d.OfficerEmployeeID)
+				require.Equal(t, "staff", d.EmployeeID)
 				assertTableCount(t, db, "disbursements", 1)
 				require.Equal(t, model.Disbursed, storedLoan(t, db, l.LoanNo).Status)
 				action = model.ActionDisburse

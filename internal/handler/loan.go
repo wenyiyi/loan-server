@@ -120,3 +120,16 @@ func (h *LoanHandler) Disburse(ctx *gin.Context) {
 
 	v1.HandleSuccess(ctx, nil)
 }
+
+// Get returns loan details to authenticated staff.
+func (h *LoanHandler) Get(ctx *gin.Context) {
+	logger := log.WithContext(ctx.Request.Context(), h.logger)
+
+	loan, err := h.service.Get(ctx.Request.Context(), ctx.Param("loan_no"))
+	if err != nil {
+		logger.Error("failed to get loan", zap.Error(err))
+		v1.HandleError(ctx, err)
+		return
+	}
+	v1.HandleSuccess(ctx, loan)
+}

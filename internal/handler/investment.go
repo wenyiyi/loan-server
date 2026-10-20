@@ -56,7 +56,7 @@ func (h *InvestmentHandler) Invest(ctx *gin.Context) {
 
 	result, err := h.service.Invest(ctx.Request.Context(), loanNo, identity.ID, identity.Email, key, req)
 	if err != nil {
-		log.WithContext(ctx.Request.Context(), h.logger).Error("failed to create investment", zap.Error(err))
+		log.WithContext(ctx.Request.Context(), h.logger).Error("failed to create investment", zap.String("loan_no", loanNo), zap.Error(err))
 		v1.HandleError(ctx, err)
 		return
 	}

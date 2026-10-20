@@ -1,14 +1,11 @@
 package repository
 
 import (
-	v1 "LoanService/api/v1"
 	"LoanService/internal/model"
-	applog "LoanService/pkg/log"
 	"context"
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -24,11 +21,6 @@ func NewInvestmentRepository(r *Repository) InvestmentRepository { return &inves
 
 func (r *investmentRepository) Create(ctx context.Context, value model.Investment) (model.Investment, error) {
 	err := r.DB(ctx).Create(&value).Error
-	// Different loans can race on the global key despite holding their own row locks.
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "idx_investments_idempotency_key" {
-		return value, v1.ErrIdempotency
-	}
 	return value, err
 }
 
@@ -39,7 +31,6 @@ func (r *investmentRepository) GetByKey(ctx context.Context, key string) (*model
 		return nil, nil
 	}
 	if err != nil {
-		applog.Error(ctx, "get investment by idempotency key failed", err)
 		return nil, err
 	}
 	return &value, nil

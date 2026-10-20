@@ -36,7 +36,7 @@ func TestOutboxWorkerRetryAndDelivery(t *testing.T) {
 	_, err := s.Invest(context.Background(), l.LoanNo, "investor", "i@example.com", "fund", v1.InvestmentRequest{Amount: 100})
 	require.NoError(t, err)
 	sender := &fakeSender{fail: true}
-	worker := notification.Worker{DB: db, Sender: sender}
+	worker := notification.NewWorker(db, sender)
 	c := context.Background()
 	t.Log("[Run] Mock mail failure; want mail unavailable, lease cleared, retry delayed")
 	require.EqualError(t, worker.Once(c), "mail unavailable")

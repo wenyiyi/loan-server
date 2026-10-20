@@ -20,7 +20,7 @@ func TestLoanCreateValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("[Input] rate=%v, ROI=%v; want valid=%t", tc.rate, tc.roi, tc.valid)
-			err := (LoanCreateRequest{Rate: tc.rate, ROI: tc.roi}).Validate()
+			err := (LoanCreateRequest{Rate: tc.rate, ROI: tc.roi, AgreementURL: "https://example.com/a.pdf"}).Validate()
 			t.Logf("[Actual] error=%v, valid=%t", err, err == nil)
 			if tc.valid {
 				require.NoError(t, err)
