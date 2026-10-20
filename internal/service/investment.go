@@ -113,6 +113,8 @@ func calculateInvestment(loan model.Loan, loanNo string, amount int64) (*v1.Inve
 	if amount > remaining {
 		return nil, v1.ErrAmount
 	}
+	// Partial funding: APPROVED -> APPROVED
+	// Fully funded: APPROVED -> INVESTED
 	result := v1.InvestmentResult{LoanNo: loanNo, InvestedAmount: loan.InvestedAmount + amount, RemainingAmount: remaining - amount, Status: model.Approved}
 	if result.RemainingAmount == 0 {
 		result.Status = model.Invested
@@ -123,30 +125,18 @@ func calculateInvestment(loan model.Loan, loanNo string, amount int64) (*v1.Inve
 func (s Service) saveInvestment(ctx context.Context, loanNo string, InvestorID string, email string, key string, amount int64, result *v1.InvestmentResult) error {
 	investment, err := s.investments.Create(ctx, model.Investment{LoanNo: loanNo, InvestorID: InvestorID, Email: email, Amount: amount, IdempotencyKey: key, Response: json.RawMessage(`{}`)})
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"create investment failed",
-			zap.String("loan_no", loanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("create investment failed", zap.String("loan_no", loanNo), zap.Error(err))
 		return err
 	}
 	result.ID = investment.ID
 	err = s.loans.UpdateInvestedAmount(ctx, loanNo, result.InvestedAmount, result.Status)
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"update invested amount failed",
-			zap.String("loan_no", loanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("update invested amount failed", zap.String("loan_no", loanNo), zap.Error(err))
 		return err
 	}
 	response, err := json.Marshal(result)
 	if err != nil {
-		log.WithContext(ctx, s.logger).Error(
-			"encode investment response failed",
-			zap.String("loan_no", loanNo),
-			zap.Error(err),
-		)
+		log.WithContext(ctx, s.logger).Error("encode investment response failed", zap.String("loan_no", loanNo), zap.Error(err))
 		return err
 	}
 	return s.investments.SaveResponse(ctx, investment.ID, response)

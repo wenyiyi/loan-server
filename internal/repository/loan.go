@@ -15,8 +15,7 @@ type LoanRepository interface {
 	Create(ctx context.Context, loan model.Loan) (model.Loan, error)
 	GetByLoanNo(ctx context.Context, loanNo string) (model.Loan, error)
 	GetForUpdate(ctx context.Context, loanNo string) (model.Loan, error)
-	UpdateInvestedAmount(ctx context.Context, loanNo string, total int64, status model.Status) error
-
+	UpdateInvestedAmount(ctx context.Context, loanNo string, total int64, newStatus model.Status) error
 	UpdateStatusWithConditions(ctx context.Context, loanNo string, from, to model.Status) error
 }
 
@@ -71,19 +70,20 @@ func findLoan(db *gorm.DB, loanNo string) (model.Loan, error) {
 	return loan, err
 }
 
-// UpdateInvestedAmount updates the invested amount and loan status.
+// UpdateInvestedAmount updates the invested amount and status
+// only when the loan is in the APPROVED state.
 func (r *loanRepository) UpdateInvestedAmount(
 	ctx context.Context,
 	loanNo string,
 	total int64,
-	status model.Status,
+	newStatus model.Status,
 ) error {
 	result := r.DB(ctx).
 		Model(&model.Loan{}).
-		Where("loan_no = ?", loanNo).
+		Where("loan_no = ? AND status = ?", loanNo, model.Approved).
 		Updates(map[string]any{
 			"invested_amount": total,
-			"status":          status,
+			"status":          newStatus,
 		})
 
 	return checkUpdateResult(result)
@@ -102,19 +102,6 @@ func (r *loanRepository) UpdateStatusWithConditions(ctx context.Context, loanNo 
 
 	if result.RowsAffected == 0 {
 		return v1.ErrState
-	}
-
-	return nil
-}
-
-// checkUpdateResult checks whether the update succeeded.
-func checkUpdateResult(result *gorm.DB) error {
-	if result.Error != nil {
-		return result.Error
-	}
-
-	if result.RowsAffected == 0 {
-		return v1.ErrNotFound
 	}
 
 	return nil

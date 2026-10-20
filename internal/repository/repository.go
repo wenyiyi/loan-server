@@ -1,6 +1,7 @@
 package repository
 
 import (
+	v1 "LoanService/api/v1"
 	applog "LoanService/pkg/log"
 	"context"
 	"fmt"
@@ -65,4 +66,17 @@ func NewDBWithCleanup(ctx context.Context, conf *config.Config) (*gorm.DB, func(
 			applog.Error(ctx, "close database pool failed", err)
 		}
 	}, nil
+}
+
+// checkUpdateResult checks whether the update succeeded.
+func checkUpdateResult(result *gorm.DB) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return v1.ErrNotFound
+	}
+
+	return nil
 }
